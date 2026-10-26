@@ -668,10 +668,11 @@
       const s = camSummary(st);
       lvl = lvlBadge(s.avgV); sub = `rata-rata ${dec(s.avgV)} kendaraan di frame · ${dur(s.ms)} dianalisis`;
     } else sub = "Belum ada data. Kepadatan muncul begitu video kamera ini dianalisis.";
+    const chart = document.getElementById("dens-chart"), has = !!(st && st.mins.length);
     document.getElementById("dens-lvl").innerHTML = lvl;
     setText("dens-sub", sub);
-    document.getElementById("dens-csv").hidden = !(st && st.mins.length);
-    drawMinutes(document.getElementById("dens-chart"), st, live);
+    document.getElementById("dens-csv").hidden = chart.hidden = !has;
+    drawMinutes(chart, st, live);
   }
 
   // One bar per minute analysed, newest at the right, coloured by density. Dashed
