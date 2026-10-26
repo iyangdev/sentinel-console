@@ -833,13 +833,15 @@
     bL.textContent = `Lalu lintas${news.at ? ` (${fmt(lalin.length)})` : ""}`;
     bA.textContent = `Semua${news.at ? ` (${fmt(pool.length)})` : ""}`;
     const c = news.collected, hm = t => wib(t).slice(0, 5);
-    const failed = [...new Set(news.failed.concat(c && c.ok ? c.sources.filter(s => !s.ok).map(s => s.name) : []))];
+    // a collected feed that failed this run may still show its headlines from an earlier one
+    const failed = [...new Set(news.failed.concat(c && c.ok ? c.sources.filter(s => !s.ok)
+      .map(s => (s.kept && s.at ? `${s.name} (memakai berita ${hm(Date.parse(s.at))} WIB)` : s.name)) : []))];
     setText("news-meta", news.loading ? "memuat berita…"
       : news.at ? `diperbarui ${hm(news.at)} WIB · ${NEWS_FEEDS.length - news.failed.length} dari ${NEWS_FEEDS.length} sumber langsung`
         + (!c ? "" : c.ok ? ` · ${c.sources.filter(s => s.ok).length} sumber terkumpul ${hm(c.at)} WIB`
           + (Date.now() - c.at > NEWS_STALE ? " (sudah lama: pengumpulnya mungkin berhenti)" : "")
           : " · sumber terkumpul tidak termuat")
-        + (failed.length ? ` (gagal: ${failed.join(", ")})` : "") : "");
+        + (failed.length ? ` · gagal: ${failed.join(", ")}` : "") : "");
     document.getElementById("news-note").textContent = newsNote();
     if (!news.at) { el.innerHTML = `<div class="an-empty">${news.loading ? "Memuat berita…" : ""}</div>`; return; }
     el.innerHTML = list.slice(0, 200).map(newsRow).join("")

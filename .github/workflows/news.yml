@@ -25,7 +25,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Collect headlines
-        run: python3 tools/update_news.py --out news-out/news.json
+        run: |
+          # the last published file: a feed that fails this time keeps its recent headlines from it
+          git fetch -q --depth 1 origin news-data && git show FETCH_HEAD:news.json > prev.json || rm -f prev.json
+          python3 tools/update_news.py --previous prev.json --out news-out/news.json
 
       - name: Publish to the news-data branch
         working-directory: news-out
