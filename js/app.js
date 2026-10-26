@@ -702,6 +702,11 @@
     ["CNN Indonesia", "https://www.cnnindonesia.com/nasional/rss"],
     ["iNews", "https://www.inews.id/feed"]
   ];
+  // Detik, Tempo, Liputan6, Republika, Viva and Sindonews don't let pages read their
+  // feeds, so tools/update_news.py collects them every 30 min (GitHub Actions) into one
+  // JSON on the repo's news-data branch, which raw.githubusercontent.com serves to any site.
+  const NEWS_COLLECTED = "https://raw.githubusercontent.com/iyangdev/sentinel-console/news-data/news.json";
+  const NEWS_STALE = 2 * 3600e3;   // a collected file older than this: the collector may have stopped
   const NEWS_EVERY = 15 * 60 * 1000, NEWS_DAYS = 3;
   // Traffic news, judged on the headline alone: road words, or a crash with a road
   // vehicle in it; never sea, rail or air. A guide, not an editor: some will slip by.
@@ -757,7 +762,7 @@
     return out;
   }
 
-  let news = { items: [], at: 0, loading: false, failed: [] }, newsTopic = "lalin", newsQ = "";
+  let news = { items: [], at: 0, loading: false, failed: [], collected: null }, newsTopic = "lalin", newsQ = "";
   async function fetchFeed([source, url]) {
     const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
     try {
@@ -769,21 +774,37 @@
       return [...doc.querySelectorAll("item")].map(it => ({ source, title: text(it, "title"), link: text(it, "link"), t: Date.parse(text(it, "pubDate")) }));
     } finally { clearTimeout(timer); }
   }
+  // the collected file: { updated, sources: [{ name, ok }], items: [{ source, title, link, t }] }
+  async function fetchCollected() {
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const r = await fetch(NEWS_COLLECTED, { signal: ctrl.signal });
+      if (!r.ok) throw new Error(String(r.status));
+      const d = await r.json();
+      return { ok: true, at: Date.parse(d.updated), sources: Array.isArray(d.sources) ? d.sources : [],
+               items: (Array.isArray(d.items) ? d.items : []).map(it => ({
+                 source: String(it.source || ""), title: String(it.title || "").trim(), link: String(it.link || "").trim(), t: +it.t })) };
+    } catch (e) {
+      return { ok: false, sources: [], items: [] };
+    } finally { clearTimeout(timer); }
+  }
   async function loadNews() {
     if (news.loading) return;
     news.loading = true;
     renderNews();
-    const res = await Promise.allSettled(NEWS_FEEDS.map(fetchFeed));
+    const [res, col] = await Promise.all([Promise.allSettled(NEWS_FEEDS.map(fetchFeed)), fetchCollected()]);
     const seen = new Set(), items = [], since = Date.now() - NEWS_DAYS * 864e5;
-    res.forEach(r => (r.status === "fulfilled" ? r.value : []).forEach(it => {
+    const add = it => {
       const key = it.title.toLowerCase();
       if (!it.title || !/^https?:\/\//i.test(it.link) || !(it.t > since) || seen.has(key) || seen.has(it.link)) return;
       seen.add(key); seen.add(it.link);
       it.lalin = isLalin(it.title);
       it.places = it.lalin ? placesIn(it.title) : [];
       items.push(it);
-    }));
-    news = { items: items.sort((a, b) => b.t - a.t), at: Date.now(), loading: false,
+    };
+    res.forEach(r => (r.status === "fulfilled" ? r.value : []).forEach(add));
+    col.items.forEach(add);
+    news = { items: items.sort((a, b) => b.t - a.t), at: Date.now(), loading: false, collected: col,
              failed: NEWS_FEEDS.filter((f, k) => res[k].status === "rejected").map(f => f[0]) };
     renderNews();
   }
@@ -811,21 +832,34 @@
     const [bL, bA] = document.querySelectorAll("#news-topic button");
     bL.textContent = `Lalu lintas${news.at ? ` (${fmt(lalin.length)})` : ""}`;
     bA.textContent = `Semua${news.at ? ` (${fmt(pool.length)})` : ""}`;
-    setText("news-meta", news.loading ? `memuat ${NEWS_FEEDS.length} sumber…`
-      : news.at ? `diperbarui ${wib(news.at).slice(0, 5)} WIB · ${NEWS_FEEDS.length - news.failed.length} dari ${NEWS_FEEDS.length} sumber`
-        + (news.failed.length ? ` (gagal: ${[...new Set(news.failed)].join(", ")})` : "") : "");
+    const c = news.collected, hm = t => wib(t).slice(0, 5);
+    const failed = [...new Set(news.failed.concat(c && c.ok ? c.sources.filter(s => !s.ok).map(s => s.name) : []))];
+    setText("news-meta", news.loading ? "memuat berita…"
+      : news.at ? `diperbarui ${hm(news.at)} WIB · ${NEWS_FEEDS.length - news.failed.length} dari ${NEWS_FEEDS.length} sumber langsung`
+        + (!c ? "" : c.ok ? ` · ${c.sources.filter(s => s.ok).length} sumber terkumpul ${hm(c.at)} WIB`
+          + (Date.now() - c.at > NEWS_STALE ? " (sudah lama: pengumpulnya mungkin berhenti)" : "")
+          : " · sumber terkumpul tidak termuat")
+        + (failed.length ? ` (gagal: ${failed.join(", ")})` : "") : "");
+    document.getElementById("news-note").textContent = newsNote();
     if (!news.at) { el.innerHTML = `<div class="an-empty">${news.loading ? "Memuat berita…" : ""}</div>`; return; }
     el.innerHTML = list.slice(0, 200).map(newsRow).join("")
       + (list.length > 200 ? `<div class="an-empty">Menampilkan 200 terbaru dari ${fmt(list.length)}; cari judul untuk yang lain.</div>` : "")
       || `<div class="an-empty">${newsQ ? "Tidak ada judul yang cocok." : newsTopic === "lalin"
         ? "Belum ada berita lalu lintas di antara berita terbaru dari sumber ini." : "Tidak ada berita."}</div>`;
   }
-  function initNews() {
-    const sources = [...new Set(NEWS_FEEDS.map(f => (f[0].startsWith("ANTARA") ? "ANTARA" : f[0])))].join(", ");
-    document.getElementById("news-note").textContent = `Judul dan tautan terbaru dari RSS publik ${sources}; baca beritanya di situs aslinya. `
-      + `Tiap sumber hanya memuat 10–50 berita terakhirnya, dan yang lebih dari ${NEWS_DAYS} hari tidak ditampilkan. Label LALU LINTAS dipilih otomatis dari kata di judul `
-      + `(tol, lalu lintas, macet, kecelakaan kendaraan, tilang, …), jadi bisa ada yang terlewat atau keliru. `
+  // where the headlines come from, and what the labels can and can't be trusted for
+  function newsNote() {
+    const live = [...new Set(NEWS_FEEDS.map(f => (f[0].startsWith("ANTARA") ? "ANTARA" : f[0])))].join(", ");
+    const c = news.collected, col = c && c.ok ? c.sources.map(s => s.name).join(", ") : "";
+    return `Judul dan tautan terbaru dari RSS publik; baca beritanya di situs aslinya. ${live} dibaca langsung oleh halaman ini`
+      + (col ? `; ${col} tidak mengizinkannya, jadi dikumpulkan tiap 30 menit lewat GitHub Actions` : "") + `. `
+      + `Kompas tidak ada: RSS-nya kini memakai API key. `
+      + `Tiap sumber hanya memuat 10–100 berita terakhirnya, dan yang lebih dari ${NEWS_DAYS} hari tidak ditampilkan. `
+      + `Label LALU LINTAS dipilih otomatis dari kata di judul (tol, lalu lintas, macet, kecelakaan kendaraan, tilang, …), jadi bisa ada yang terlewat atau keliru. `
       + `Tombol kamera muncul bila judulnya menyebut wilayah atau ruas yang punya kamera.`;
+  }
+  function initNews() {
+    document.getElementById("news-note").textContent = newsNote();
     document.getElementById("news-reload").onclick = () => loadNews();
     document.getElementById("news-topic").addEventListener("click", e => {
       const b = e.target.closest("button[data-topic]");
