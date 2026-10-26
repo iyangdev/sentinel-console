@@ -554,9 +554,10 @@
 
   /* ---------------- TABS ---------------- */
   // Langsung: the map console · Analitik: video across the network and the traffic
-  // the AI measured · Kamera: every camera in one table. The right panel stays in all
-  // three. The tab is kept in the address (#analitik, #kamera) so a link opens on it.
-  const TABS = ["langsung", "analitik", "kamera"];
+  // the AI measured · Kamera: every camera in one table · Berita: traffic headlines.
+  // The right panel stays in all of them. The tab is kept in the address (#analitik,
+  // #kamera, #berita) so a link opens on it.
+  const TABS = ["langsung", "analitik", "kamera", "berita"];
   let tab = "langsung", pendingFit = false;
   function setTab(name) {
     if (!TABS.includes(name)) name = "langsung";
@@ -572,7 +573,9 @@
     history.replaceState(null, "", name === "langsung" ? location.pathname + location.search : "#" + name);
     if (name === "langsung") { map.invalidateSize(); if (pendingFit) fitCity(); }
     else if (name === "kamera") renderDir();
-    else { renderNetwork(); renderTraffic(); }
+    else if (name === "analitik") { renderNetwork(); renderTraffic(); }
+    else if (Date.now() - news.at > NEWS_EVERY) loadNews();   // feeds are only fetched once someone opens Berita
+    else renderNews();
   }
   function initTabs() {
     document.querySelectorAll(".tab").forEach(t => { t.onclick = () => setTab(t.dataset.tab); });
@@ -674,6 +677,178 @@
       </div>`;
     }).join("");
     el.querySelectorAll(".an-card").forEach(card => drawMinutes(card.querySelector("canvas"), camStats[card.dataset.i], false));
+  }
+
+  /* ---------------- BERITA TAB ---------------- */
+  // Headlines from public RSS feeds that any site may read (they send
+  // Access-Control-Allow-Origin: *), fetched straight from this page: no proxy, no
+  // copy kept. Only the title, source, time and link show; the story stays on the
+  // publisher's site. Regional ANTARA feeds cover the provinces that have cameras.
+  const NEWS_FEEDS = [
+    ["ANTARA", "https://www.antaranews.com/rss/terkini.xml"],
+    ["ANTARA", "https://www.antaranews.com/rss/top-news.xml"],
+    ["ANTARA Metro", "https://www.antaranews.com/rss/metro-lintas-kota.xml"],
+    ["ANTARA Megapolitan", "https://megapolitan.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Banten", "https://banten.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Jabar", "https://jabar.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Jateng", "https://jateng.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Jogja", "https://jogja.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Jatim", "https://jatim.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Lampung", "https://lampung.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Sumsel", "https://sumsel.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Sumut", "https://sumut.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Riau", "https://riau.antaranews.com/rss/terkini.xml"],
+    ["ANTARA Kaltim", "https://kaltim.antaranews.com/rss/terkini.xml"],
+    ["CNN Indonesia", "https://www.cnnindonesia.com/nasional/rss"],
+    ["iNews", "https://www.inews.id/feed"]
+  ];
+  const NEWS_EVERY = 15 * 60 * 1000, NEWS_DAYS = 3;
+  // Traffic news, judged on the headline alone: road words, or a crash with a road
+  // vehicle in it; never sea, rail or air. A guide, not an editor: some will slip by.
+  const LALIN = /\b(jalan tol|tol|lalu lintas|lalin|macet|kemacetan|kepadatan (arus|kendaraan|lalu)|contra ?flow|one way|ganjil[- ]genap|rekayasa (lalu lintas|arus)|pengalihan arus|penutupan jalan|gerbang tol|rest area|korlantas|ditlantas|satlantas|dishub|jasa marga|hutama karya|etle|tilang|mudik|arus balik|atcs|odol|jalan (rusak|berlubang|longsor|amblas)|operasi (patuh|zebra|keselamatan))\b/i;
+  const CRASH = /\b(kecelakaan|laka lantas|tabrakan|bertabrakan|terguling|terbalik|tertabrak|menabrak|ditabrak|tabrak|hantam|menghantam|tergelincir|terperosok)\b/i;
+  const ROAD_VEHICLE = /\b(jalan|jalur|tol|truk|bus|mobil|motor|pemotor|pengendara|kendaraan|minibus|angkot|tronton|pikap|travel|ojol)\b/i;
+  const NOT_ROAD = /\b(tol laut|pesawat|kapal|perahu|kereta|krl|lrt|mrt|helikopter)\b/i;
+  const isLalin = t => !NOT_ROAD.test(t) && (LALIN.test(t) || (CRASH.test(t) && ROAD_VEHICLE.test(t)));
+  // A place in a traffic headline → the cameras there: a region, or a search on road names.
+  const PLACES = [
+    [/\b(jakarta|dki)\b/i, { city: "Jakarta" }], [/\bbekasi\b/i, { city: "Bekasi" }], [/\btangerang\b/i, { city: "Tangerang" }],
+    [/\bbogor\b/i, { city: "Bogor" }], [/\bdepok\b/i, { city: "Depok" }], [/\bbandung\b/i, { city: "Bandung" }],
+    [/\bcirebon\b/i, { city: "Cirebon" }], [/\bsemarang\b/i, { city: "Semarang" }], [/\b(solo|surakarta)\b/i, { city: "Surakarta" }],
+    [/\b(yogyakarta|yogya|jogja|diy)\b/i, { city: "Yogyakarta" }], [/\bsurabaya\b/i, { city: "Surabaya" }], [/\bmalang\b/i, { city: "Malang" }],
+    [/\bmedan\b/i, { city: "Medan" }], [/\bmakassar\b/i, { city: "Makassar" }], [/\bbalikpapan\b/i, { city: "Balikpapan" }],
+    [/\blampung\b/i, { q: "Terbanggi", label: "Lampung" }], [/\b(japek|cikampek)\b/i, { q: "Cikampek", label: "Cikampek" }],
+    [/\b(cipali|palimanan)\b/i, { q: "Palimanan", label: "Cipali" }], [/\bcipularang\b/i, { q: "Cipularang", label: "Cipularang" }],
+    [/\b(padaleunyi|purbaleunyi|padalarang|cileunyi)\b/i, { q: "Cileunyi", label: "Padaleunyi" }],
+    [/\bjagorawi\b/i, { q: "Jakarta-Bogor-Ciawi", label: "Jagorawi" }], [/\b(bocimi|sukabumi)\b/i, { q: "Sukabumi", label: "Bocimi" }],
+    [/\bjorr\b/i, { q: "JORR", label: "JORR" }], [/\b(mbz|mohammed bin zayed)\b/i, { q: "MBZ", label: "Layang MBZ" }],
+    [/\bbecakayu\b/i, { q: "Bekasi-Cawang", label: "Becakayu" }], [/\bdalam kota\b/i, { q: "Dalam Kota", label: "Tol Dalam Kota" }],
+    [/\b(sedyatmo|tol bandara)\b/i, { q: "Sedyatmo", label: "Sedyatmo" }], [/\bpriok\b/i, { q: "Priok", label: "Tanjung Priok" }],
+    [/\bmerak\b/i, { q: "Merak", label: "Tangerang–Merak" }], [/\bserpong\b/i, { q: "Serpong", label: "Serpong" }],
+    [/\b(serang|rangkasbitung|panimbang)\b/i, { q: "Panimbang", label: "Serang–Panimbang" }],
+    [/\b(cibitung|cimanggis)\b/i, { q: "Cibitung", label: "Cimanggis–Cibitung" }], [/\bcilincing\b/i, { q: "Cilincing", label: "Cilincing" }],
+    [/\bcinere\b/i, { q: "Cinere", label: "Cinere" }], [/\b(kunciran|cengkareng)\b/i, { q: "Kunciran", label: "Kunciran–Cengkareng" }],
+    [/\b(pejagan|pemalang|brebes|tegal)\b/i, { q: "Pemalang", label: "Pejagan–Pemalang" }], [/\bbatang\b/i, { q: "Semarang - Batang", label: "Semarang–Batang" }],
+    [/\b(ngawi|kertosono)\b/i, { q: "Ngawi", label: "Solo–Ngawi–Kertosono" }], [/\bkediri\b/i, { q: "Kediri", label: "Kediri" }],
+    [/\bmojokerto\b/i, { q: "Mojokerto", label: "Mojokerto" }], [/\bgempol\b/i, { q: "Gempol", label: "Gempol" }],
+    [/\bpandaan\b/i, { q: "Pandaan", label: "Pandaan" }], [/\b(pasuruan|probolinggo)\b/i, { q: "Pasuruan", label: "Pasuruan–Probolinggo" }],
+    [/\bbanyuwangi\b/i, { q: "Banyuwangi", label: "Banyuwangi" }], [/\bjuanda\b/i, { q: "Juanda", label: "Juanda" }],
+    [/\bpalembang\b/i, { q: "Palembang", label: "Palembang" }], [/\b(indralaya|prabumulih)\b/i, { q: "Indralaya", label: "Indralaya" }],
+    [/\b(kayu ?agung)\b/i, { q: "Kayu Agung", label: "Kayu Agung" }], [/\bjambi\b/i, { q: "Jambi", label: "Jambi" }],
+    [/\bbengkulu\b/i, { q: "Bengkulu", label: "Bengkulu" }], [/\b(sicincin|padang(?! panjang))\b/i, { q: "Sicincin", label: "Padang–Sicincin" }],
+    [/\b(pekanbaru|dumai)\b/i, { q: "Pekanbaru", label: "Pekanbaru–Dumai" }], [/\bbinjai\b/i, { q: "Binjai", label: "Binjai" }],
+    [/\bkualanamu\b/i, { q: "Kualanamu", label: "Kualanamu" }], [/\b(kisaran|indrapura)\b/i, { q: "Kisaran", label: "Indrapura–Kisaran" }],
+    [/\b(sigli|banda aceh)\b/i, { q: "Sigli", label: "Sigli–Banda Aceh" }], [/\bsamarinda\b/i, { q: "Samarinda", label: "Balikpapan–Samarinda" }],
+    [/\b(manado|bitung)\b/i, { q: "Bitung", label: "Manado–Bitung" }]
+  ];
+  const placeCount = {};   // how many cameras each target finds, counted once
+  function placesIn(title) {
+    const out = [];
+    for (const [re, p] of PLACES) {
+      if (out.length === 2 || !re.test(title)) continue;
+      const key = p.city ? "c:" + p.city : "q:" + p.q;
+      if (!(key in placeCount)) {
+        const q = (p.q || "").toLowerCase();
+        placeCount[key] = cams.filter(c => p.city ? c.city === p.city
+          : (c.name + " " + c.road + " " + c.opName + " " + c.city + " " + c.id).toLowerCase().includes(q)).length;
+      }
+      if (placeCount[key] && !out.some(o => o.key === key)) out.push(Object.assign({ key, n: placeCount[key], label: p.label || p.city }, p));
+    }
+    return out;
+  }
+
+  let news = { items: [], at: 0, loading: false, failed: [] }, newsTopic = "lalin", newsQ = "";
+  async function fetchFeed([source, url]) {
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const r = await fetch(url, { signal: ctrl.signal });
+      if (!r.ok) throw new Error(String(r.status));
+      const doc = new DOMParser().parseFromString(await r.text(), "text/xml");
+      if (doc.querySelector("parsererror")) throw new Error("bukan RSS");
+      const text = (it, tag) => (it.querySelector(tag)?.textContent || "").trim();
+      return [...doc.querySelectorAll("item")].map(it => ({ source, title: text(it, "title"), link: text(it, "link"), t: Date.parse(text(it, "pubDate")) }));
+    } finally { clearTimeout(timer); }
+  }
+  async function loadNews() {
+    if (news.loading) return;
+    news.loading = true;
+    renderNews();
+    const res = await Promise.allSettled(NEWS_FEEDS.map(fetchFeed));
+    const seen = new Set(), items = [], since = Date.now() - NEWS_DAYS * 864e5;
+    res.forEach(r => (r.status === "fulfilled" ? r.value : []).forEach(it => {
+      const key = it.title.toLowerCase();
+      if (!it.title || !/^https?:\/\//i.test(it.link) || !(it.t > since) || seen.has(key) || seen.has(it.link)) return;
+      seen.add(key); seen.add(it.link);
+      it.lalin = isLalin(it.title);
+      it.places = it.lalin ? placesIn(it.title) : [];
+      items.push(it);
+    }));
+    news = { items: items.sort((a, b) => b.t - a.t), at: Date.now(), loading: false,
+             failed: NEWS_FEEDS.filter((f, k) => res[k].status === "rejected").map(f => f[0]) };
+    renderNews();
+  }
+
+  // "12 mnt lalu · 00:41 WIB", with the date once it isn't today
+  function newsWhen(t) {
+    const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+    const ago = m < 1 ? "baru saja" : m < 60 ? `${m} mnt lalu` : m < 1440 ? `${Math.floor(m / 60)} jam lalu` : `${Math.floor(m / 1440)} hari lalu`;
+    const day = d => new Date(d).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" });
+    return `${ago} · ${day(t) === day(Date.now()) ? "" : day(t) + " "}${wib(t).slice(0, 5)} WIB`;
+  }
+  function newsRow(it) {
+    const tag = it.lalin ? `<span class="lvl" style="--lvl:#f5a524">LALU LINTAS</span>` : "";
+    const placeBtns = it.places.map(p => `<button type="button" ${p.city ? `data-city="${esc(p.city)}"` : `data-q="${esc(p.q)}"`}>Kamera ${esc(p.label)} (${fmt(p.n)})</button>`).join("");
+    return `<article class="news-item">
+      <a class="news-title" href="${esc(it.link)}" target="_blank" rel="noopener">${esc(it.title)}</a>
+      <div class="news-meta">${tag}<span>${esc(it.source)} · ${newsWhen(it.t)}</span></div>
+      ${placeBtns ? `<div class="news-cams">${placeBtns}</div>` : ""}
+    </article>`;
+  }
+  function renderNews() {
+    const el = document.getElementById("news-list");
+    const pool = news.items.filter(it => !newsQ || it.title.toLowerCase().includes(newsQ));
+    const lalin = pool.filter(it => it.lalin), list = newsTopic === "lalin" ? lalin : pool;
+    const [bL, bA] = document.querySelectorAll("#news-topic button");
+    bL.textContent = `Lalu lintas${news.at ? ` (${fmt(lalin.length)})` : ""}`;
+    bA.textContent = `Semua${news.at ? ` (${fmt(pool.length)})` : ""}`;
+    setText("news-meta", news.loading ? `memuat ${NEWS_FEEDS.length} sumber…`
+      : news.at ? `diperbarui ${wib(news.at).slice(0, 5)} WIB · ${NEWS_FEEDS.length - news.failed.length} dari ${NEWS_FEEDS.length} sumber`
+        + (news.failed.length ? ` (gagal: ${[...new Set(news.failed)].join(", ")})` : "") : "");
+    if (!news.at) { el.innerHTML = `<div class="an-empty">${news.loading ? "Memuat berita…" : ""}</div>`; return; }
+    el.innerHTML = list.slice(0, 200).map(newsRow).join("")
+      + (list.length > 200 ? `<div class="an-empty">Menampilkan 200 terbaru dari ${fmt(list.length)}; cari judul untuk yang lain.</div>` : "")
+      || `<div class="an-empty">${newsQ ? "Tidak ada judul yang cocok." : newsTopic === "lalin"
+        ? "Belum ada berita lalu lintas di antara berita terbaru dari sumber ini." : "Tidak ada berita."}</div>`;
+  }
+  function initNews() {
+    const sources = [...new Set(NEWS_FEEDS.map(f => (f[0].startsWith("ANTARA") ? "ANTARA" : f[0])))].join(", ");
+    document.getElementById("news-note").textContent = `Judul dan tautan terbaru dari RSS publik ${sources}; baca beritanya di situs aslinya. `
+      + `Tiap sumber hanya memuat 10–50 berita terakhirnya, dan yang lebih dari ${NEWS_DAYS} hari tidak ditampilkan. Label LALU LINTAS dipilih otomatis dari kata di judul `
+      + `(tol, lalu lintas, macet, kecelakaan kendaraan, tilang, …), jadi bisa ada yang terlewat atau keliru. `
+      + `Tombol kamera muncul bila judulnya menyebut wilayah atau ruas yang punya kamera.`;
+    document.getElementById("news-reload").onclick = () => loadNews();
+    document.getElementById("news-topic").addEventListener("click", e => {
+      const b = e.target.closest("button[data-topic]");
+      if (!b) return;
+      newsTopic = b.dataset.topic;
+      document.querySelectorAll("#news-topic button").forEach(x => x.classList.toggle("on", x === b));
+      renderNews();
+    });
+    const inp = document.getElementById("news-q");
+    let t;
+    inp.oninput = () => { clearTimeout(t); t = setTimeout(() => { newsQ = inp.value.trim().toLowerCase(); renderNews(); }, 150); };
+    // a headline's camera button opens the Kamera tab on that region or road
+    document.getElementById("news-list").addEventListener("click", e => {
+      const b = e.target.closest("button[data-city], button[data-q]");
+      if (!b) return;
+      if (b.dataset.city) { setQuery(""); setCity(b.dataset.city); } else { setCity(""); setQuery(b.dataset.q); }
+      setTab("kamera");
+    });
+    // while the tab is open: fresh times every minute, fresh feeds every 15
+    setInterval(() => {
+      if (tab !== "berita") return;
+      if (Date.now() - news.at > NEWS_EVERY) loadNews(); else renderNews();
+    }, 60000);
   }
 
   function initViews() {
@@ -1181,6 +1356,7 @@
     initModal();
     initAnalytics();
     initViews();
+    initNews();
     renderAnalytics();
     setTab(location.hash.slice(1));   // a link can open on #analitik or #kamera
     tickClock();

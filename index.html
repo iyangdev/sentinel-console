@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="css/leaflet.css" />
   <!-- ?v= here and on the app scripts: GitHub Pages lets browsers keep files for 10 min, so a
        reload right after a deploy could pair this page with old CSS/JS. Change it with them. -->
-  <link rel="stylesheet" href="css/styles.css?v=20261027-2" />
+  <link rel="stylesheet" href="css/styles.css?v=20261027-3" />
 </head>
 <body>
   <div id="fx"></div>
@@ -40,6 +40,7 @@
         <button type="button" class="tab active" role="tab" aria-selected="true" data-tab="langsung">Langsung</button>
         <button type="button" class="tab" role="tab" aria-selected="false" data-tab="analitik">Analitik</button>
         <button type="button" class="tab" role="tab" aria-selected="false" data-tab="kamera">Kamera</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-tab="berita">Berita</button>
       </nav>
 
       <div class="header-right">
@@ -111,6 +112,23 @@
               <div class="tbl-wrap"><table class="an-tbl" id="an-cities"></table></div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- BERITA: headlines from public RSS feeds, read straight from this page; the stories stay on the publishers' sites -->
+      <section class="view" id="view-berita" aria-label="Berita">
+        <div class="view-inner">
+          <div class="v-title">Berita <span class="v-sub" id="news-meta"></span>
+            <button type="button" class="csv-btn news-reload" id="news-reload">⟳ Muat ulang</button></div>
+          <div class="dir-bar">
+            <div class="seg" id="news-topic" role="group" aria-label="Topik berita">
+              <button type="button" class="on" data-topic="lalin">Lalu lintas</button>
+              <button type="button" data-topic="">Semua</button>
+            </div>
+            <input id="news-q" placeholder="Cari judul berita…" spellcheck="false" />
+          </div>
+          <div class="news-list" id="news-list"></div>
+          <div class="news-note" id="news-note"></div>
         </div>
       </section>
 
@@ -268,10 +286,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 
   <!-- ===================== APP ===================== -->
-  <script src="js/cctv-data.js?v=20261027-2"></script>
-  <script src="js/city-cctv-data.js?v=20261027-2"></script>
-  <script src="js/bts-data.js?v=20261027-2"></script>
-  <script src="js/vision.js?v=20261027-2"></script>
-  <script src="js/app.js?v=20261027-2"></script>
+  <script src="js/cctv-data.js?v=20261027-3"></script>
+  <script src="js/city-cctv-data.js?v=20261027-3"></script>
+  <script src="js/bts-data.js?v=20261027-3"></script>
+  <script src="js/vision.js?v=20261027-3"></script>
+  <script src="js/app.js?v=20261027-3"></script>
 </body>
 </html>
