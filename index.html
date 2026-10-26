@@ -11,7 +11,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <!-- vendored: the artifact viewer's CSP only admits own-file stylesheets (+ Google Fonts) -->
   <link rel="stylesheet" href="css/leaflet.css" />
-  <link rel="stylesheet" href="css/styles.css" />
+  <!-- ?v= here and on the app scripts: GitHub Pages lets browsers keep files for 10 min, so a
+       reload right after a deploy could pair this page with old CSS/JS. Change it with them. -->
+  <link rel="stylesheet" href="css/styles.css?v=20261027-1" />
 </head>
 <body>
   <div id="fx"></div>
@@ -261,10 +263,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 
   <!-- ===================== APP ===================== -->
-  <script src="js/cctv-data.js"></script>
-  <script src="js/city-cctv-data.js"></script>
-  <script src="js/bts-data.js"></script>
-  <script src="js/vision.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/cctv-data.js?v=20261027-1"></script>
+  <script src="js/city-cctv-data.js?v=20261027-1"></script>
+  <script src="js/bts-data.js?v=20261027-1"></script>
+  <script src="js/vision.js?v=20261027-1"></script>
+  <script src="js/app.js?v=20261027-1"></script>
 </body>
 </html>
