@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="css/leaflet.css" />
   <!-- ?v= here and on the app scripts: GitHub Pages lets browsers keep files for 10 min, so a
        reload right after a deploy could pair this page with old CSS/JS. Change it with them. -->
-  <link rel="stylesheet" href="css/styles.css?v=20261027-1" />
+  <link rel="stylesheet" href="css/styles.css?v=20261027-2" />
 </head>
 <body>
   <div id="fx"></div>
@@ -43,9 +43,9 @@
       </nav>
 
       <div class="header-right">
-        <div class="hstat"><div class="k">WILAYAH</div><div class="v" id="hdr-region">INDONESIA</div></div>
-        <div class="hstat"><div class="k">WAKTU · WIB</div><div class="v" id="clock">--:--:--</div></div>
-        <div class="hstat"><div class="k">KAMERA BERVIDEO</div><div class="v" id="hdr-live" style="color:var(--accent)">mengecek…</div></div>
+        <div class="hstat hs-region"><div class="k">WILAYAH</div><div class="v" id="hdr-region">INDONESIA</div></div>
+        <div class="hstat hs-clock"><div class="k">WAKTU · WIB</div><div class="v" id="clock">--:--:--</div></div>
+        <div class="hstat hs-live"><div class="k">KAMERA BERVIDEO</div><div class="v" id="hdr-live" style="color:var(--accent)">mengecek…</div></div>
         <div class="alert-pill" id="alert-pill">● AI SIAGA</div>
       </div>
     </header>
@@ -54,7 +54,8 @@
     <div id="main">
       <!-- LEFT PANEL -->
       <aside class="panel left">
-        <div class="panel-head"><span class="dot"></span> Kontrol Peta</div>
+        <div class="panel-head"><span class="dot"></span> Kontrol Peta
+          <button type="button" class="panel-close" id="panel-close" aria-label="Tutup">✕</button></div>
         <div class="panel-scroll">
           <div class="section-label">Lapisan</div>
           <div class="toggle-row on" data-layer="cctv"><span class="lbl">CCTV Tol (BPJT)</span><span class="switch"></span></div>
@@ -85,6 +86,8 @@
         <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
         <div class="hud-corner bl"></div><div class="hud-corner br"></div>
         <div class="map-badge">CITRA SATELIT ESRI · CCTV TOL + KOTA · BTS</div>
+        <!-- phones: the left panel opens over the map -->
+        <button type="button" class="map-fab" id="panel-open">☰ Lapisan &amp; daftar</button>
         <div class="map-coords" id="map-coords">LINTANG -6.2088 · BUJUR 106.8456 · ZOOM 12</div>
       </section>
 
@@ -150,11 +153,13 @@
           <div class="section-label">Kelas deteksi · rata-rata per frame</div>
           <div class="class-bars" id="class-bars"></div>
 
-          <div class="panel-head" style="border-top:1px solid var(--border)">
-            <span class="dot"></span> Analitik per Kamera
-            <button type="button" class="csv-btn" id="csv-all" hidden>⤓ CSV</button>
+          <div class="rp-cams">
+            <div class="panel-head" style="border-top:1px solid var(--border)">
+              <span class="dot"></span> Analitik per Kamera
+              <button type="button" class="csv-btn" id="csv-all" hidden>⤓ CSV</button>
+            </div>
+            <div class="cam-stats" id="cam-stats"></div>
           </div>
-          <div class="cam-stats" id="cam-stats"></div>
 
           <div class="panel-head" style="border-top:1px solid var(--border)">
             <span class="dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span> Log Peristiwa
@@ -263,10 +268,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 
   <!-- ===================== APP ===================== -->
-  <script src="js/cctv-data.js?v=20261027-1"></script>
-  <script src="js/city-cctv-data.js?v=20261027-1"></script>
-  <script src="js/bts-data.js?v=20261027-1"></script>
-  <script src="js/vision.js?v=20261027-1"></script>
-  <script src="js/app.js?v=20261027-1"></script>
+  <script src="js/cctv-data.js?v=20261027-2"></script>
+  <script src="js/city-cctv-data.js?v=20261027-2"></script>
+  <script src="js/bts-data.js?v=20261027-2"></script>
+  <script src="js/vision.js?v=20261027-2"></script>
+  <script src="js/app.js?v=20261027-2"></script>
 </body>
 </html>

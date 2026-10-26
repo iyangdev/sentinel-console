@@ -495,6 +495,7 @@
   }
 
   function focusCamera(cam) {
+    setPanelOpen(false);   // phones: show the map, not the list over it
     map.flyTo([cam.lat, cam.lng], 16, { duration: 0.8 });
     const mk = markers[cam._i];
     if (mk) mk.openPopup();
@@ -561,6 +562,8 @@
     if (!TABS.includes(name)) name = "langsung";
     tab = name;
     document.getElementById("app").dataset.tab = name;
+    setPanelOpen(false);
+    document.getElementById("main").scrollTop = 0;   // phones scroll the whole tab
     document.querySelectorAll(".tab").forEach(t => {
       const on = t.dataset.tab === name;
       t.classList.toggle("active", on);
@@ -574,7 +577,11 @@
   function initTabs() {
     document.querySelectorAll(".tab").forEach(t => { t.onclick = () => setTab(t.dataset.tab); });
     window.addEventListener("hashchange", () => setTab(location.hash.slice(1)));
+    document.getElementById("panel-open").onclick = () => setPanelOpen(true);
+    document.getElementById("panel-close").onclick = () => setPanelOpen(false);
   }
+  // Phones have no room for the left panel beside the map: it opens over the map instead.
+  function setPanelOpen(open) { document.getElementById("app").classList.toggle("panel-open", open); }
 
   // what the buttons in both tabs do with a camera
   function act(what, cam) {
@@ -590,7 +597,8 @@
     const s = statusInfo(cam);
     return `<tr data-i="${cam._i}">
       <td><span class="${ledClass(cam)}"></span></td>
-      <td><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${cam.kind === "city" ? "CCTV kota" : "CCTV tol"}</div></td>
+      <td><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${cam.kind === "city" ? "CCTV kota" : "CCTV tol"}</div>
+        <div class="sb m-only">${esc(cam.city)} · ${esc(cam.road)} · ${esc(cam.opName)}</div></td>
       <td>${esc(cam.city)}</td><td>${esc(cam.road)}</td><td>${esc(cam.opName)}</td>
       <td><div style="color:${s.col}">${s.label}</div><div class="sb">${esc(s.detail)}</div></td>
       <td class="act"><button type="button" data-act="map">Peta</button><button type="button" data-act="ai">Analisis AI</button></td>
@@ -1155,7 +1163,7 @@
     document.getElementById("btn-stop").onclick = () => { if (engine) engine.stop(); onEngineStatus("idle", "Tayangan dihentikan."); };
     document.getElementById("fo-retry").onclick = () => { if (lastSource) play(lastSource.mode, lastSource.arg); };
     document.getElementById("fo-other").onclick = () => { document.getElementById("adv").open = true; document.getElementById("hls-preset").focus(); };
-    document.addEventListener("keydown", e => { if (e.key === "Escape") closeCamera(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { closeCamera(); setPanelOpen(false); } });
   }
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
