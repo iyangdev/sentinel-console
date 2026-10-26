@@ -173,6 +173,7 @@ header {
 .cam-item .meta .nm { font-size: 12px; color: var(--text); letter-spacing: 0.3px; }
 .cam-item .meta .sb { font-size: 10px; color: var(--text-dim); }
 .cam-item .cid { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.cam-hidden { padding: 9px 14px; font-size: 10.5px; color: var(--text-faint); letter-spacing: 0.04em; }
 
 /* ---------- map ---------- */
 #map-wrap { position: relative; min-width: 0; }
@@ -225,6 +226,8 @@ header {
 .leaflet-popup-content { margin: 10px 12px; font-family: var(--font-mono); }
 .popup-title { font-family: var(--font-display); letter-spacing: 1px; font-size: 15px; color: var(--accent); margin-bottom: 3px; }
 .popup-row { font-size: 11px; color: var(--text-dim); }
+.popup-note { margin-top: 5px; font-size: 10.5px; line-height: 1.4; color: var(--text-dim); }
+.popup-note a { color: var(--accent); }
 .popup-btn { margin-top: 8px; display: inline-block; cursor: pointer; font-family: var(--font-display); letter-spacing: 1px; font-size: 12px; color: var(--accent); border: 1px solid var(--border-strong); padding: 5px 12px; border-radius: 3px; background: rgba(55,227,155,0.08); }
 .popup-btn:hover { background: rgba(55,227,155,0.18); }
 

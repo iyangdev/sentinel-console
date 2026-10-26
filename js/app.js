@@ -52,6 +52,11 @@
   // a camera the registry marks inactive keeps its muted look until its own check passes
   const looksLive = cam => { const s = camState(cam).st; return s === "ok" || (cam.active && (s === "presumed" || s === "unknown")); };
 
+  // "Sembunyikan tanpa video" takes cameras known to have no video off the map and
+  // out of the list. The camera whose popup is open stays until the popup closes.
+  let hideNoVideo = false, popupCam = null;
+  const shown = cam => !hideNoVideo || cam === popupCam || !noVideo(cam);
+
   /* ---------------- MAP ---------------- */
   function initMap() {
     map = L.map("map", { zoomControl: true, attributionControl: true, minZoom: 5, maxZoom: 18, preferCanvas: true })
@@ -110,6 +115,8 @@
     return { color: col, fillColor: col, opacity: 0.85, fillOpacity: live ? 0.5 : 0.25 };
   }
 
+  const layerOf = cam => cam.kind === "city" ? cityLayer : markerLayer;
+
   function renderMarkers() {
     markerLayer.clearLayers();
     cityLayer.clearLayers();
@@ -120,15 +127,30 @@
       } else {
         m = L.circleMarker([cam.lat, cam.lng], Object.assign({ radius: 3.5, weight: 1 }, circleStyle(cam)));
       }
-      m.addTo(cam.kind === "city" ? cityLayer : markerLayer);
+      if (shown(cam)) m.addTo(layerOf(cam));
       m.bindPopup(() => popupHtml(cam));   // built on open, so it shows the current status
       m.on("popupopen", () => {
+        popupCam = cam;
         wirePopup(cam);
         ensureEngine().preloadModel();   // head start on the AI model before the feed opens
         queueCheck(cam, true);           // and check this camera's own stream right away
       });
+      m.on("popupclose", () => {
+        if (popupCam === cam) popupCam = null;
+        // a camera found to have no video while its popup was open may leave now,
+        // once Leaflet has finished closing the popup
+        setTimeout(() => { if (syncShown(cam)) scheduleList(); }, 0);
+      });
       markers[cam._i] = m;
     });
+  }
+
+  // Puts a camera's marker on or off its layer to match shown(); true if that changed.
+  function syncShown(cam) {
+    const m = markers[cam._i], layer = layerOf(cam), show = shown(cam);
+    if (!m || show === layer.hasLayer(m)) return false;
+    if (show) layer.addLayer(m); else layer.removeLayer(m);
+    return true;
   }
 
   function wirePopup(cam) {
@@ -143,6 +165,8 @@
     nostream: ["TANPA VIDEO", "var(--amber)"],
     down:     ["SERVER TIDAK MERESPONS", "var(--red)"]
   };
+  // Jasa Marga shows its cameras in its own Travoy app ("CCTV Real Time" on the official page)
+  const JM_HOST = "jmlive.jasamarga.com", TRAVOY_URL = "https://www.jasamarga.com/inovasi-teknologi/travoy";
   function popupHtml(cam) {
     const kind = cam.kind === "city" ? "CCTV KOTA" : "CCTV TOL";
     const s = camState(cam);
@@ -156,6 +180,7 @@
       <div class="popup-row">${kind} · ${esc(cam.city)} · ${esc(cam.road)}</div>
       <div class="popup-row">${esc(cam.opName)}</div>
       <div class="popup-row" style="color:${col}">● ${label} <span style="color:var(--text-faint)">· ${esc(detail)}</span></div>
+      ${hostOf(cam) === JM_HOST ? `<div class="popup-note">Tayangan resmi CCTV Jasa Marga ada di aplikasi <a href="${TRAVOY_URL}" target="_blank" rel="noopener">Travoy</a>.</div>` : ""}
       <div class="popup-btn" data-i="${cam._i}">▶ OPEN AI FEED</div>`;
   }
 
@@ -303,6 +328,7 @@
     const m = markers[cam._i];
     if (m) { if (cam.featured != null) m.setIcon(featuredIcon(cam)); else m.setStyle(circleStyle(cam)); }
     if (row) { row.querySelector(".stat-led").className = ledClass(cam); row.lastElementChild.outerHTML = rowTag(cam); }
+    if (syncShown(cam)) scheduleList();
     refreshPopup(cam);
   }
   function restyleAll() {
@@ -315,8 +341,9 @@
     if (m && m.isPopupOpen()) { m.getPopup().update(); wirePopup(cam); }
   }
 
-  let countsTimer = null;
+  let countsTimer = null, listTimer = null;
   function scheduleCounts() { if (!countsTimer) countsTimer = setTimeout(() => { countsTimer = null; updateCounts(); }, 400); }
+  function scheduleList() { if (!listTimer) listTimer = setTimeout(() => { listTimer = null; renderList(); }, 400); }
   function tally() {
     let live = 0, none = 0;
     cams.forEach(c => { if (noVideo(c)) none++; else if (looksLive(c)) live++; });
@@ -325,7 +352,7 @@
   function updateCounts() {
     if (!Object.keys(hostCheck).length) return;     // first sweep still running
     const t = tally();
-    setText("svr-status", `Video tersedia: ${fmt(t.live)} kamera · tanpa video: ${fmt(t.none)}`
+    setText("svr-status", `Video tersedia: ${fmt(t.live)} kamera · tanpa video: ${fmt(t.none)}${hideNoVideo ? " (disembunyikan)" : ""}`
       + (t.muted ? ` · nonaktif (registry): ${fmt(t.muted)}` : ""));
     setText("hdr-live", `${fmt(t.live)} / ${fmt(cams.length)}`);
   }
@@ -383,7 +410,7 @@
   function checkVisible() {
     if (map.getZoom() < 11) return;
     const view = map.getBounds(), mid = map.getCenter();
-    cams.filter(c => c.hls && c.lat && c.lng && view.contains([c.lat, c.lng]) && map.hasLayer(c.kind === "city" ? cityLayer : markerLayer))
+    cams.filter(c => c.hls && c.lat && c.lng && view.contains([c.lat, c.lng]) && map.hasLayer(layerOf(c)))
       .sort((a, b) => mid.distanceTo([a.lat, a.lng]) - mid.distanceTo([b.lat, b.lng]))
       .slice(0, 40)
       .forEach(c => queueCheck(c));
@@ -408,8 +435,8 @@
       state.city = sel.value;
       setText("hdr-region", state.city ? state.city.toUpperCase() : "INDONESIA");
       renderList();
-      const inCity = cams.filter(c => !state.city || c.city === state.city);
-      fitTo(inCity.length ? inCity : cams);
+      const inCity = cams.filter(c => !state.city || c.city === state.city), vis = inCity.filter(shown);
+      fitTo(vis.length ? vis : inCity.length ? inCity : cams);
     };
   }
 
@@ -425,12 +452,15 @@
 
   function renderList() {
     const el = document.getElementById("camera-list");
-    const list = cams.filter(camMatches)
+    const matched = cams.filter(camMatches);
+    const list = matched.filter(shown)
       .sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999) || a.city.localeCompare(b.city) || a.road.localeCompare(b.road));
+    const hidden = matched.length - list.length;
     el.innerHTML = list.slice(0, 400).map(cam => `<div class="cam-item" data-i="${cam._i}">
         <span class="${ledClass(cam)}"></span>
         <div class="meta"><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${esc(cam.road)} · ${esc(cam.opName)}</div></div>
-        ${rowTag(cam)}</div>`).join("");
+        ${rowTag(cam)}</div>`).join("")
+      + (hidden ? `<div class="cam-hidden">${fmt(hidden)} kamera tanpa video disembunyikan</div>` : "");
     el.querySelectorAll(".cam-item").forEach(row => {
       const cam = cams[+row.dataset.i];
       row.onclick = () => { map.flyTo([cam.lat, cam.lng], 16, { duration: 0.8 }); const mk = markers[cam._i]; if (mk) mk.openPopup(); };
@@ -469,12 +499,20 @@
         const layer = row.dataset.layer;
         if (layer === "cctv") on ? markerLayer.addTo(map) : map.removeLayer(markerLayer);
         if (layer === "citycctv") on ? cityLayer.addTo(map) : map.removeLayer(cityLayer);
+        if (layer === "novideo") setHideNoVideo(on);
         if (layer === "labels") on ? labelsLayer.addTo(map) : map.removeLayer(labelsLayer);
         if (layer === "heat") { if (on) { buildHeat(); heatLayer.addTo(map); } else map.removeLayer(heatLayer); }
         if (layer === "coverage") { if (on) { buildCoverage(); coverageLayer.addTo(map); } else map.removeLayer(coverageLayer); }
         if (layer === "bts") { if (on) { buildBts(); btsLayer.addTo(map); } else map.removeLayer(btsLayer); }
       };
     });
+  }
+
+  function setHideNoVideo(on) {
+    hideNoVideo = on;
+    cams.forEach(c => syncShown(c));
+    renderList();
+    updateCounts();
   }
 
   function initTabs() {
