@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SENTINEL Console</title>
+  <meta name="description" content="Map-based public-space monitoring console with live AI vision analytics over public CCTV points." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- vendored: the artifact viewer's CSP only admits own-file stylesheets (+ Google Fonts) -->
+  <link rel="stylesheet" href="css/leaflet.css" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="fx"></div>
+
+  <div id="app">
+    <!-- ===================== HEADER ===================== -->
+    <header>
+      <div class="brand">
+        <div class="mark">
+          <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="20" cy="20" r="17" stroke="#37e39b" stroke-width="1.6"/>
+            <circle cx="20" cy="20" r="6" stroke="#37e39b" stroke-width="1.6"/>
+            <circle cx="20" cy="20" r="2.2" fill="#37e39b"/>
+            <path d="M20 3 L20 10 M20 30 L20 37 M3 20 L10 20 M30 20 L37 20" stroke="#37e39b" stroke-width="1.6"/>
+          </svg>
+        </div>
+        <div>
+          <div class="title">SENTINEL</div>
+          <div class="sub">SEE THE WHOLE PICTURE</div>
+        </div>
+      </div>
+
+      <nav class="tabs">
+        <div class="tab active" data-tab="live">Live</div>
+        <div class="tab" data-tab="analytics">Analytics</div>
+        <div class="tab" data-tab="cameras">Cameras</div>
+      </nav>
+
+      <div class="header-right">
+        <div class="hstat"><div class="k">REGION</div><div class="v">DKI JAKARTA</div></div>
+        <div class="hstat"><div class="k">UTC+07 · LOCAL</div><div class="v" id="clock">--:--:--</div></div>
+        <div class="hstat"><div class="k">THREAT LEVEL</div><div class="v" style="color:var(--accent)">NOMINAL</div></div>
+        <div class="alert-pill" id="alert-pill">● OPERATIONAL</div>
+      </div>
+    </header>
+
+    <!-- ===================== MAIN ===================== -->
+    <div id="main">
+      <!-- LEFT PANEL -->
+      <aside class="panel left">
+        <div class="panel-head"><span class="dot"></span> Control Layers</div>
+        <div class="panel-scroll">
+          <div class="section-label">Map Overlays</div>
+          <div class="toggle-row on" data-layer="cctv"><span class="lbl">CCTV Nodes</span><span class="switch"></span></div>
+          <div class="toggle-row" data-layer="bts"><span class="lbl">BTS / Cell Sites</span><span class="switch"></span></div>
+          <div class="toggle-row on" data-layer="labels"><span class="lbl">Street Labels</span><span class="switch"></span></div>
+          <div class="toggle-row" data-layer="heat"><span class="lbl">Density Heatmap</span><span class="switch"></span></div>
+          <div class="toggle-row" data-layer="coverage"><span class="lbl">Coverage Radius</span><span class="switch"></span></div>
+
+          <div class="panel-head" style="border-top:1px solid var(--border)">
+            <span class="dot"></span> CCTV Nodes <span class="count" id="cam-count">0</span>
+          </div>
+          <div class="cam-filter"><select id="city-select"></select></div>
+          <div class="cam-filter"><input id="cam-filter" placeholder="Filter by name / road / operator…" spellcheck="false" /></div>
+          <div id="camera-list"></div>
+          <div class="src-note" id="src-note"></div>
+        </div>
+      </aside>
+
+      <!-- MAP -->
+      <section id="map-wrap">
+        <div id="map"></div>
+        <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
+        <div class="hud-corner bl"></div><div class="hud-corner br"></div>
+        <div class="map-badge">LIVE SATELLITE · NATIONAL TOLL-ROAD CCTV (BPJT) + BTS</div>
+        <div class="map-coords" id="map-coords">LAT -6.2088 · LNG 106.8456 · ZOOM 12</div>
+      </section>
+
+      <!-- RIGHT PANEL -->
+      <aside class="panel right">
+        <div class="panel-head"><span class="dot"></span> AI Vision Analysis</div>
+        <div class="panel-scroll">
+          <div class="ai-live">
+            <div class="big">
+              <div class="ai-metric people"><div class="v" id="agg-people">0</div><div class="k">People / min</div></div>
+              <div class="ai-metric"><div class="v" id="agg-vehicles">0</div><div class="k">Vehicles / min</div></div>
+            </div>
+          </div>
+
+          <div class="section-label">Detection Classes (network-wide)</div>
+          <div class="class-bars" id="class-bars"></div>
+
+          <div class="panel-head" style="border-top:1px solid var(--border)">
+            <span class="dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span> Event Feed
+          </div>
+          <div class="events" id="ai-events"></div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ===================== FOOTER ===================== -->
+    <footer>
+      <div class="timeline">
+        <div class="tl-head">
+          <span class="ttl">Network Activity</span>
+          <span class="rng">last 60 min · detections/min</span>
+        </div>
+        <canvas id="spark"></canvas>
+      </div>
+      <div class="legend">
+        <div class="li"><span class="sw" style="background:var(--accent)"></span> CCTV online</div>
+        <div class="li"><span class="sw" style="background:var(--text-faint)"></span> Offline</div>
+        <div class="li"><span class="sw" style="background:#c084fc"></span> BTS site</div>
+        <div class="li"><span class="sw" style="background:var(--cyan)"></span> People</div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ===================== CAMERA MODAL ===================== -->
+  <div class="modal-backdrop" id="cam-modal">
+    <div class="modal">
+      <div class="modal-feed">
+        <div class="feed-top">
+          <span class="rec"><span class="d"></span> REC</span>
+          <span class="ftitle" id="cam-title">—</span>
+          <span class="fid" id="cam-id">—</span>
+        </div>
+        <video id="cam-video" playsinline muted></video>
+        <canvas id="cam-canvas" width="960" height="540"></canvas>
+        <div class="feed-note" id="cam-note">Generic object detection · no biometric identification</div>
+      </div>
+
+      <div class="modal-side">
+        <div class="mhead">Analysis <span class="x" id="cam-close">✕</span></div>
+
+        <div class="src-btns">
+          <div class="src-btn active" id="btn-hls">Live HLS</div>
+          <div class="src-btn" id="btn-sim">Simulated</div>
+          <div class="src-btn" id="btn-webcam">Webcam</div>
+          <div class="src-btn" id="btn-file">Video File</div>
+        </div>
+        <div class="hls-row">
+          <select id="hls-preset" title="Verified live presets"></select>
+          <input id="hls-url" placeholder="https://…/index.m3u8" spellcheck="false" />
+          <div class="src-btn go" id="hls-go">Connect</div>
+        </div>
+        <input type="file" id="file-input" accept="video/*" style="display:none" />
+        <div class="src-btn stop" id="btn-stop">Stop engine</div>
+
+        <div class="model-status" id="model-status"><span class="led"></span><span id="model-text">AI engine idle</span></div>
+
+        <div class="mmetrics">
+          <div class="mmetric people"><div class="v" id="m-people">0</div><div class="k">People</div></div>
+          <div class="mmetric"><div class="v" id="m-vehicles">0</div><div class="k">Vehicles</div></div>
+          <div class="mmetric"><div class="v" id="m-fps">0</div><div class="k">FPS</div></div>
+        </div>
+
+        <div class="det-list-head">Live Detections</div>
+        <div class="det-list" id="det-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== LIBS ===================== -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+  <!-- ===================== APP ===================== -->
+  <script src="js/cctv-data.js"></script>
+  <script src="js/bts-data.js"></script>
+  <script src="js/vision.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

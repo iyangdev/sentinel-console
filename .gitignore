@@ -1,0 +1,9 @@
+# OS / editor
+.DS_Store
+
+# Local Claude Code tooling config (launch configs, personal settings)
+.claude/
+
+# Python
+__pycache__/
+*.pyc
