@@ -22,15 +22,35 @@
   const markers = {};
   const state = { city: "", q: "" };
 
-  const camStatus = c => (c.active ? "online" : "offline");
   const OP_COLOR = { Telkomsel: "#ff4d5e", Indosat: "#f5a524", "XL Axiata": "#38bdf8", Tri: "#c084fc", Smartfren: "#37e39b" };
 
-  // Live stream-server health: cameras on one host share a server, so when that
-  // server is down the whole group goes dark at once. hostStatus is filled in by
-  // probing one stream per host (see startHostHealth); markers then dim to match.
-  const hostStatus = {};            // host -> "up" | "down"  (absent = unknown)
+  const fmt = n => n.toLocaleString("id-ID");
+  // clock and log times in WIB, whatever the viewer's own time zone
+  const wib = t => new Date(t).toLocaleTimeString("en-GB", { timeZone: "Asia/Jakarta", hour12: false });
+  function setText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
+
+  /* Live camera status. Markers, list rows, popups and counts all read camState(),
+     which combines two kinds of check (see STREAM CHECKS):
+       - a check of the camera's own stream, run for the cameras you look at;
+       - a 2-camera sample per stream server, run for everything every 4 min.
+     States: ok (video plays) · nostream (server answers, no playable video) ·
+     down (server unreachable) · presumed (server fine, camera not checked itself) ·
+     unknown (nothing checked yet: only the registry's own flag to go on). */
+  const CHECK_EVERY = 4 * 60 * 1000;
+  const camCheck = {};    // cam._i -> { st, why, at, src: "cam" }
+  const hostCheck = {};   // host   -> { st, why, at, src: "host" }
   function hostOf(cam) { try { return cam.hls ? new URL(cam.hls).host : null; } catch (e) { return null; } }
-  function camDown(cam) { const h = hostOf(cam); return !!h && hostStatus[h] === "down"; }
+  function camState(cam) {
+    if (!cam.hls) return { st: "nostream", why: "Kamera ini tidak menyediakan stream publik.", src: "cam" };
+    const c = camCheck[cam._i], h = hostCheck[hostOf(cam)];
+    if (h && h.st === "down" && (!c || h.at >= c.at)) return h;   // server gone: nothing on it plays
+    if (c && !(c.st === "down" && h && h.at > c.at)) return c;   // own result, unless a newer sweep reached its server
+    if (h && h.st !== "ok") return h;                             // both sampled cameras failed
+    return { st: h ? "presumed" : "unknown" };
+  }
+  const noVideo = cam => { const s = camState(cam).st; return s === "nostream" || s === "down"; };
+  // a camera the registry marks inactive keeps its muted look until its own check passes
+  const looksLive = cam => { const s = camState(cam).st; return s === "ok" || (cam.active && (s === "presumed" || s === "unknown")); };
 
   /* ---------------- MAP ---------------- */
   function initMap() {
@@ -72,8 +92,8 @@
 
   function featuredIcon(cam) {
     const cls = ["cam-marker"];
-    if (camDown(cam)) cls.push("down");
-    else if (camStatus(cam) !== "online") cls.push("offline");
+    if (noVideo(cam)) cls.push("down");
+    else if (!looksLive(cam)) cls.push("offline");
     if (cam.kind === "city") cls.push("city");
     return L.divIcon({
       className: "",
@@ -82,11 +102,12 @@
     });
   }
 
-  // marker style for a non-featured camera, honouring live host status
+  // marker look for a non-featured camera: live (kind colour), muted (registry
+  // says inactive, not checked), or dimmed (no video)
   function circleStyle(cam) {
-    if (camDown(cam)) return { color: "#55606b", fillColor: "#55606b", opacity: 0.4, fillOpacity: 0.12 };
-    const col = cam.active ? KIND_COLOR[cam.kind] : "#6f8a7e";
-    return { color: col, fillColor: col, opacity: 0.85, fillOpacity: cam.active ? 0.5 : 0.25 };
+    if (noVideo(cam)) return { color: "#55606b", fillColor: "#55606b", opacity: 0.4, fillOpacity: 0.12 };
+    const live = looksLive(cam), col = live ? KIND_COLOR[cam.kind] : "#6f8a7e";
+    return { color: col, fillColor: col, opacity: 0.85, fillOpacity: live ? 0.5 : 0.25 };
   }
 
   function renderMarkers() {
@@ -100,21 +121,41 @@
         m = L.circleMarker([cam.lat, cam.lng], Object.assign({ radius: 3.5, weight: 1 }, circleStyle(cam)));
       }
       m.addTo(cam.kind === "city" ? cityLayer : markerLayer);
-      m.bindPopup(popupHtml(cam));
+      m.bindPopup(() => popupHtml(cam));   // built on open, so it shows the current status
       m.on("popupopen", () => {
-        const btn = document.querySelector(".popup-btn[data-i='" + cam._i + "']");
-        if (btn) btn.onclick = () => openCamera(cam);
+        wirePopup(cam);
         ensureEngine().preloadModel();   // head start on the AI model before the feed opens
+        queueCheck(cam, true);           // and check this camera's own stream right away
       });
       markers[cam._i] = m;
     });
   }
 
+  function wirePopup(cam) {
+    const btn = document.querySelector(".popup-btn[data-i='" + cam._i + "']");
+    if (btn) btn.onclick = () => openCamera(cam);
+  }
+
+  const STATE_LABEL = {
+    ok:       ["VIDEO TERSEDIA", "var(--accent)"],
+    presumed: ["SERVER AKTIF", "var(--text-dim)"],
+    unknown:  ["BELUM DICEK", "var(--text-faint)"],
+    nostream: ["TANPA VIDEO", "var(--amber)"],
+    down:     ["SERVER TIDAK MERESPONS", "var(--red)"]
+  };
   function popupHtml(cam) {
     const kind = cam.kind === "city" ? "CCTV KOTA" : "CCTV TOL";
+    const s = camState(cam);
+    const [label, col] = STATE_LABEL[s.st];
+    const detail = pending.has(cam._i) ? "mengecek kamera ini…"
+      : s.st === "ok" ? `dicek ${wib(s.at)} WIB`
+      : s.st === "presumed" ? "kamera lain di server ini berjalan; kamera ini belum dicek"
+      : s.st === "unknown" ? (cam.active ? "menunggu pengecekan" : "registry: nonaktif")
+      : s.why + (s.src === "host" ? " (hasil cek server)" : "");
     return `<div class="popup-title" style="color:${KIND_COLOR[cam.kind]}">${esc(cam.name) || "CCTV"}</div>
       <div class="popup-row">${kind} · ${esc(cam.city)} · ${esc(cam.road)}</div>
-      <div class="popup-row">${esc(cam.opName)} · ${camStatus(cam).toUpperCase()}</div>
+      <div class="popup-row">${esc(cam.opName)}</div>
+      <div class="popup-row" style="color:${col}">● ${label} <span style="color:var(--text-faint)">· ${esc(detail)}</span></div>
       <div class="popup-btn" data-i="${cam._i}">▶ OPEN AI FEED</div>`;
   }
 
@@ -146,23 +187,147 @@
     });
   }
 
-  /* ---------------- STREAM-SERVER HEALTH ---------------- */
-  // Reachability of one stream URL. A cross-origin GET that merely *loads* (even
-  // when CORS hides the body) proves the server answered; only a real transport
-  // failure — DNS, refused, TLS, timeout — counts as down. An http stream can't
-  // load on this https page at all, so it's treated as unreachable up front.
-  function reachable(url) {
-    if (location.protocol === "https:" && /^http:\/\//i.test(url)) return Promise.resolve(false);
-    const hit = (mode) => new Promise(res => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6500);
-      fetch(url, { mode, cache: "no-store", signal: ctrl.signal })
-        .then(() => { clearTimeout(timer); res(true); })
-        .catch(() => { clearTimeout(timer); res(false); });
-    });
-    // cors first (clean success); if it throws, no-cors separates a CORS block
-    // (server is up) from a dead host (both fail).
-    return hit("cors").then(ok => ok || hit("no-cors"));
+  /* ---------------- STREAM CHECKS ---------------- */
+  // What a camera's stream really delivers, tested the way hls.js loads it:
+  // playlist → variant → newest segment, each readable from this page. A server
+  // that answers with an empty body or a 404 is "nostream"; only one that doesn't
+  // answer at all (DNS, refused, TLS, timeout) is "down". An http stream can't
+  // load on this https page, so that counts as "down" too.
+  const isPlaylist = t => /^﻿?\s*#EXTM3U/.test(t || "");
+  const uriLines = t => t.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+
+  async function fetchHop(url, wantText) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 7000);
+    try {
+      const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+      return { status: r.status, url: r.url || url, text: wantText ? await r.text() : "" };
+    } catch (e) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+      ctrl.abort();   // a segment only needs its headers, not its body
+    }
+  }
+
+  // Did the server answer at all? An opaque no-cors reply still counts.
+  async function answers(url) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 7000);
+    try { await fetch(url, { mode: "no-cors", cache: "no-store", signal: ctrl.signal }); return true; }
+    catch (e) { return false; }
+    finally { clearTimeout(timer); ctrl.abort(); }
+  }
+
+  async function checkStream(url) {
+    if (location.protocol === "https:" && /^http:\/\//i.test(url))
+      return { st: "down", why: "Stream http tidak bisa dibuka dari halaman https." };
+    const hop = async (u, wantText) => {
+      const r = await fetchHop(u, wantText);
+      if (r) return { r };
+      return { fail: (await answers(u))
+        ? { st: "nostream", why: "Server menjawab, tapi browser tidak diizinkan membaca streamnya." }
+        : { st: "down", why: "Server tidak merespons." } };
+    };
+    let x = await hop(url, true);
+    if (x.fail) return x.fail;
+    if (x.r.status !== 200) return { st: "nostream", why: `Server menjawab ${x.r.status}: stream tidak ditemukan.` };
+    if (!isPlaylist(x.r.text)) return { st: "nostream", why: x.r.text.trim() ? "Server menjawab, tapi isinya bukan video." : "Server menjawab, tapi isinya kosong." };
+    let base = x.r.url, list = x.r.text;
+    if (list.includes("#EXT-X-STREAM-INF")) {          // master playlist: follow the first variant
+      const v = uriLines(list)[0];
+      if (!v) return { st: "nostream", why: "Playlist tanpa varian video." };
+      x = await hop(new URL(v, base).href, true);
+      if (x.fail) return x.fail;
+      if (x.r.status !== 200 || !isPlaylist(x.r.text)) return { st: "nostream", why: "Varian video tidak tersedia." };
+      base = x.r.url; list = x.r.text;
+    }
+    const segs = uriLines(list);
+    if (!segs.length) return { st: "nostream", why: "Playlist belum berisi potongan video." };
+    x = await hop(new URL(list.includes("#EXT-X-ENDLIST") ? segs[0] : segs[segs.length - 1], base).href, false);
+    if (x.fail) return x.fail;
+    if (x.r.status !== 200 && x.r.status !== 206) return { st: "nostream", why: `Potongan video gagal dimuat (${x.r.status}).` };
+    return { st: "ok", why: "" };
+  }
+  const safeCheck = url => checkStream(url).catch(() => ({ st: "nostream", why: "Playlist tidak bisa dibaca." }));
+
+  // Per-camera checks run four at a time, so no camera server gets a burst.
+  const queue = [], pending = new Set();
+  let workers = 0;
+  function queueCheck(cam, urgent) {
+    if (!cam.hls) return;
+    const c = camCheck[cam._i], h = hostCheck[hostOf(cam)], now = Date.now();
+    if (c && now - c.at < CHECK_EVERY) return;                      // fresh enough
+    if (h && h.st === "down" && now - h.at < CHECK_EVERY) return;   // server is gone; the next sweep retries it
+    if (pending.has(cam._i)) {                                      // already waiting: maybe jump the line
+      const k = queue.indexOf(cam);
+      if (urgent && k > 0) { queue.splice(k, 1); queue.unshift(cam); }
+      return;
+    }
+    pending.add(cam._i);
+    if (urgent) queue.unshift(cam); else queue.push(cam);
+    refreshPopup(cam);
+    while (workers < 4 && queue.length) runChecks();
+  }
+  async function runChecks() {
+    workers++;
+    while (queue.length) {
+      const cam = queue.shift();
+      const res = await safeCheck(cam.hls);
+      pending.delete(cam._i);
+      recordCheck(cam, res);
+    }
+    workers--;
+  }
+
+  function recordCheck(cam, res) {
+    camCheck[cam._i] = { st: res.st, why: res.why, at: Date.now(), src: "cam" };
+    // a camera that plays proves its server answers, whatever the last sweep said
+    const host = hostOf(cam), h = hostCheck[host];
+    if (res.st === "ok" && h && h.st === "down") {
+      Object.assign(h, { st: "ok", why: "", at: Date.now() });
+      cams.forEach(c => { if (hostOf(c) === host) restyle(c); });
+    } else restyle(cam);
+    scheduleCounts();
+  }
+
+  // A feed that plays or fails is the most direct check there is: record it.
+  function noteFeed(cam, ok, why) {
+    if (!cam || !cam.hls) return;
+    recordCheck(cam, ok ? { st: "ok", why: "" } : { st: "nostream", why: why || "Feed gagal diputar." });
+  }
+
+  // Re-style one camera everywhere it shows, in place: marker, list row, open popup.
+  const rowOf = cam => document.querySelector(`#camera-list .cam-item[data-i='${cam._i}']`);
+  function restyle(cam, row = rowOf(cam)) {
+    const m = markers[cam._i];
+    if (m) { if (cam.featured != null) m.setIcon(featuredIcon(cam)); else m.setStyle(circleStyle(cam)); }
+    if (row) { row.querySelector(".stat-led").className = ledClass(cam); row.lastElementChild.outerHTML = rowTag(cam); }
+    refreshPopup(cam);
+  }
+  function restyleAll() {
+    const rows = {};
+    document.querySelectorAll("#camera-list .cam-item").forEach(r => { rows[r.dataset.i] = r; });
+    cams.forEach(cam => restyle(cam, rows[cam._i] || null));
+  }
+  function refreshPopup(cam) {
+    const m = markers[cam._i];
+    if (m && m.isPopupOpen()) { m.getPopup().update(); wirePopup(cam); }
+  }
+
+  let countsTimer = null;
+  function scheduleCounts() { if (!countsTimer) countsTimer = setTimeout(() => { countsTimer = null; updateCounts(); }, 400); }
+  function tally() {
+    let live = 0, none = 0;
+    cams.forEach(c => { if (noVideo(c)) none++; else if (looksLive(c)) live++; });
+    return { live, none, muted: cams.length - live - none };
+  }
+  function updateCounts() {
+    if (!Object.keys(hostCheck).length) return;     // first sweep still running
+    const t = tally();
+    setText("svr-status", `Video tersedia: ${fmt(t.live)} kamera · tanpa video: ${fmt(t.none)}`
+      + (t.muted ? ` · nonaktif (registry): ${fmt(t.muted)}` : ""));
+    setText("hdr-live", `${fmt(t.live)} / ${fmt(cams.length)}`);
   }
 
   function hostCameras() {
@@ -171,56 +336,53 @@
     return groups;
   }
 
-  async function sweepHostHealth() {
-    const groups = hostCameras();
-    const hosts = Object.keys(groups);
-    if (!hosts.length) return;
-    setSvrStatus("Status server kamera: mengecek…");
-    await Promise.all(hosts.map(async h => {
-      const sample = groups[h].slice().sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999)).slice(0, 2);
-      const up = (await Promise.all(sample.map(cam => reachable(cam.hls)))).some(Boolean);
-      hostStatus[h] = up ? "up" : "down";
+  // Every 4 min: sample two cameras per server (curated ones first, then ones the
+  // registry calls active). If neither plays, the server's verdict covers its
+  // cameras until they're checked one by one.
+  async function sweepServers() {
+    const groups = hostCameras(), first = !Object.keys(hostCheck).length;
+    await Promise.all(Object.entries(groups).map(async ([host, list]) => {
+      const sample = list.slice()
+        .sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999) || (b.active ? 1 : 0) - (a.active ? 1 : 0))
+        .slice(0, 2);
+      const res = await Promise.all(sample.map(c => safeCheck(c.hls)));
+      const now = Date.now();
+      sample.forEach((c, k) => { camCheck[c._i] = { st: res[k].st, why: res[k].why, at: now, src: "cam" }; });
+      const best = res.find(r => r.st === "ok") || res.find(r => r.st === "nostream") || res[0];
+      const prev = hostCheck[host];
+      hostCheck[host] = { st: best.st, why: best.why, at: now, src: "host" };
+      if (prev && prev.st !== best.st) addEvent(best.st === "ok" ? "info" : "warn", {
+        ok: `Server ${host} kembali mengirim video`,
+        nostream: `Server ${host} menjawab tanpa video`,
+        down: `Server ${host} tidak merespons`
+      }[best.st] + ` · ${fmt(list.length)} kamera`);
     }));
-    applyHostStatus();
-    const up = hosts.filter(h => hostStatus[h] === "up").length;
-    const dimmed = cams.filter(camDown).length;
-    setSvrStatus(`Server kamera: ${up}/${hosts.length} online` + (dimmed ? ` · ${dimmed} kamera diredupkan` : ""));
-    addEvent(up < hosts.length ? "warn" : "info",
-      `Cek server CCTV · ${up}/${hosts.length} host online` + (dimmed ? `, ${dimmed} kamera offline diredupkan` : ""));
+    restyleAll();
+    updateCounts();
+    renderPresets();
+    if (first) {
+      const t = tally();
+      addEvent(t.none ? "warn" : "info", `Cek video selesai · ${fmt(t.live)} kamera bervideo, ${fmt(t.none)} tanpa video (${Object.keys(groups).length} server)`);
+    }
+    checkVisible();
   }
 
-  function startHostHealth() {
-    setTimeout(sweepHostHealth, 1500);                  // let the map paint first
-    setInterval(sweepHostHealth, 4 * 60 * 1000);        // re-check every 4 min
+  // The cameras you're actually looking at get checked one by one, nearest the
+  // centre first. Zoomed out there are too many dots; the server sample covers them.
+  function checkVisible() {
+    if (map.getZoom() < 11) return;
+    const view = map.getBounds(), mid = map.getCenter();
+    cams.filter(c => c.hls && c.lat && c.lng && view.contains([c.lat, c.lng]) && map.hasLayer(c.kind === "city" ? cityLayer : markerLayer))
+      .sort((a, b) => mid.distanceTo([a.lat, a.lng]) - mid.distanceTo([b.lat, b.lng]))
+      .slice(0, 40)
+      .forEach(c => queueCheck(c));
   }
 
-  // Re-style existing markers and list LEDs in place — no full re-render, so an
-  // open popup stays open.
-  function applyHostStatus() {
-    cams.forEach(cam => {
-      const m = markers[cam._i];
-      if (!m) return;
-      if (cam.featured != null) m.setIcon(featuredIcon(cam));
-      else if (m.setStyle) m.setStyle(circleStyle(cam));
-    });
-    document.querySelectorAll("#camera-list .cam-item").forEach(row => {
-      const cam = cams[+row.dataset.i];
-      const led = cam && row.querySelector(".stat-led");
-      if (led) led.className = `stat-led led-${camDown(cam) ? "down" : camStatus(cam)}${cam.kind === "city" ? " kind-city" : ""}`;
-    });
-  }
-
-  function setSvrStatus(text) {
-    const el = document.getElementById("svr-status");
-    if (el) el.textContent = text;
-  }
-
-  // A live feed opening or failing is ground truth about its host — fold it in now.
-  function noteHostFromFeed(cam, up) {
-    const h = cam && hostOf(cam);
-    if (!h || hostStatus[h] === (up ? "up" : "down")) return;
-    hostStatus[h] = up ? "up" : "down";
-    applyHostStatus();
+  function startChecks() {
+    setTimeout(sweepServers, 1500);                 // let the map paint first
+    setInterval(sweepServers, CHECK_EVERY);
+    let t;
+    map.on("moveend", () => { clearTimeout(t); t = setTimeout(checkVisible, 600); });
   }
 
   /* ---------------- CITY SELECTOR + LIST ---------------- */
@@ -233,6 +395,7 @@
       + places.map(p => `<option value="${esc(p)}">${esc(p)} · ${counts[p]}</option>`).join("");
     sel.onchange = () => {
       state.city = sel.value;
+      setText("hdr-region", state.city ? state.city.toUpperCase() : "INDONESIA");
       renderList();
       const inCity = cams.filter(c => !state.city || c.city === state.city);
       fitTo(inCity.length ? inCity : cams);
@@ -245,17 +408,18 @@
     return (cam.name + " " + cam.road + " " + cam.opName + " " + cam.city + " " + cam.id).toLowerCase().includes(state.q);
   }
 
+  const ledClass = cam => `stat-led led-${noVideo(cam) ? "down" : looksLive(cam) ? "online" : "offline"}${cam.kind === "city" ? " kind-city" : ""}`;
+  // "LIVE" marks the curated cameras, but only while they actually have video
+  const rowTag = cam => (cam.featured != null && !noVideo(cam)) ? `<span class="badge-live">LIVE</span>` : `<span class="cid">${esc(cam.city)}</span>`;
+
   function renderList() {
     const el = document.getElementById("camera-list");
     const list = cams.filter(camMatches)
       .sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999) || a.city.localeCompare(b.city) || a.road.localeCompare(b.road));
-    el.innerHTML = list.slice(0, 400).map(cam => {
-      const tag = cam.featured != null ? `<span class="badge-live">LIVE</span>` : `<span class="cid">${esc(cam.city)}</span>`;
-      return `<div class="cam-item" data-i="${cam._i}">
-        <span class="stat-led led-${camDown(cam) ? "down" : camStatus(cam)}${cam.kind === "city" ? " kind-city" : ""}"></span>
+    el.innerHTML = list.slice(0, 400).map(cam => `<div class="cam-item" data-i="${cam._i}">
+        <span class="${ledClass(cam)}"></span>
         <div class="meta"><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${esc(cam.road)} · ${esc(cam.opName)}</div></div>
-        ${tag}</div>`;
-    }).join("");
+        ${rowTag(cam)}</div>`).join("");
     el.querySelectorAll(".cam-item").forEach(row => {
       const cam = cams[+row.dataset.i];
       row.onclick = () => { map.flyTo([cam.lat, cam.lng], 16, { duration: 0.8 }); const mk = markers[cam._i]; if (mk) mk.openPopup(); };
@@ -307,76 +471,111 @@
     });
   }
 
-  /* ---------------- NETWORK-WIDE ANALYTICS (SIM) ---------------- */
+  /* ---------------- AI ANALYSIS (real detections only) ---------------- */
+  // The right panel and the timeline show what the AI engine actually saw in the
+  // feeds you opened, never made-up numbers. A "run" is one source played from
+  // start to stop; once the feed closes the panel keeps showing that run. The SIM
+  // scene is left out: it is labelled as a simulation inside the feed itself.
   const CLASS_LABELS = [
-    ["person", "Person", "c-person"], ["car", "Car", ""], ["motorcycle", "Motorcycle", ""],
-    ["bus", "Bus", ""], ["truck", "Truck", ""], ["bicycle", "Bicycle", ""]
+    ["person", "Orang", "c-person"], ["car", "Mobil", ""], ["motorcycle", "Motor", ""],
+    ["bus", "Bus", ""], ["truck", "Truk", ""], ["bicycle", "Sepeda", ""]
   ];
-  const agg = { person: 0, car: 0, motorcycle: 0, bus: 0, truck: 0, bicycle: 0 };
-  const sparkData = new Array(60).fill(0).map(() => 20 + Math.random() * 40);
-  const startedAt = Date.now();
+  const SERIES_SECS = 120;
+  // one decimal; a small non-zero average reads "<0,1" so it doesn't look like nothing was seen
+  const dec = x => (x > 0 && x < 0.05 ? "<0,1" : (Math.round(x * 10) / 10).toLocaleString("id-ID"));
+  const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} dtk` : `${Math.floor(s / 60)} mnt ${s % 60} dtk`; };
+  let run = null, panelAt = 0;
 
-  function tickAnalytics() {
-    const load = Math.max(1, cams.filter(c => c.active).length / 60);
-    agg.person += (Math.random() * load * 0.6) | 0;
-    agg.car += (Math.random() * load * 1.6) | 0;
-    agg.motorcycle += (Math.random() * load * 2.1) | 0;
-    agg.bus += (Math.random() * load * 0.3) | 0;
-    agg.truck += (Math.random() * load * 0.8) | 0;
-    agg.bicycle += (Math.random() * load * 0.2) | 0;
-    const vehicles = agg.car + agg.motorcycle + agg.bus + agg.truck + agg.bicycle;
-    document.getElementById("agg-people").textContent = perMin(agg.person);
-    document.getElementById("agg-vehicles").textContent = perMin(vehicles);
-    renderClassBars();
-    pushSpark(((Math.random() * 40) | 0) + 20);
+  function startRun(label) {
+    endRun();
+    run = { label, start: Date.now(), end: 0, frames: 0, sumP: 0, sumV: 0, peakP: 0, peakV: 0,
+            by: {}, recent: [], series: [], sec: 0, secSum: 0, secN: 0 };
+    renderPanel();
+    drawSpark();
   }
-  function perMin(total) { return Math.round(total / Math.max(1, (Date.now() - startedAt) / 60000)); }
+
+  function endRun() {
+    if (!run || run.end) return;
+    run.end = Date.now();
+    if (run.frames) addEvent("info", `Analisis selesai · ${run.label} · ${dur(run.end - run.start)}, `
+      + `rata-rata ${dec(run.sumV / run.frames)} kendaraan/frame (puncak ${run.peakV})`);
+    renderPanel();
+    drawSpark();
+  }
+
+  function recordStats(s) {
+    if (!run || run.end) return;
+    const now = Date.now();
+    run.frames++;
+    run.sumP += s.people; run.sumV += s.vehicles;
+    run.peakP = Math.max(run.peakP, s.people); run.peakV = Math.max(run.peakV, s.vehicles);
+    for (const k in s.byClass) run.by[k] = (run.by[k] || 0) + s.byClass[k];
+    run.recent.push({ t: now, p: s.people, v: s.vehicles });
+    while (now - run.recent[0].t > 10000) run.recent.shift();
+    // one timeline bar per second: the average vehicles in frame during that second
+    const sec = Math.floor(now / 1000);
+    if (sec !== run.sec) {
+      if (run.secN) { run.series.push(run.secSum / run.secN); if (run.series.length > SERIES_SECS) run.series.shift(); }
+      run.sec = sec; run.secSum = 0; run.secN = 0;
+    }
+    run.secSum += s.vehicles; run.secN++;
+    if (now - panelAt > 500) { panelAt = now; renderPanel(); drawSpark(); }
+  }
+
+  function renderPanel() {
+    const live = !!run && !run.end;
+    let p = "—", v = "—", sub;
+    if (!run) sub = "Belum ada analisis. Klik titik kamera di peta, lalu ▶ OPEN AI FEED: hasil deteksi nyata muncul di sini.";
+    else if (!run.frames) sub = live ? "Menunggu frame pertama dianalisis…" : "Feed berhenti sebelum ada frame yang dianalisis.";
+    else {
+      const win = live ? run.recent : null;   // live: the last 10 s · finished: the whole run
+      const n = win ? win.length : run.frames;
+      p = dec((win ? win.reduce((a, r) => a + r.p, 0) : run.sumP) / n);
+      v = dec((win ? win.reduce((a, r) => a + r.v, 0) : run.sumV) / n);
+      sub = `${win ? "Rata-rata 10 detik terakhir" : "Rata-rata seluruh analisis"} · puncak ${run.peakV} kendaraan, `
+        + `${run.peakP} orang · ${dur((run.end || Date.now()) - run.start)}`;
+    }
+    setText("ai-src", run ? `${live ? "● LIVE" : "■ SELESAI"} · ${run.label}` : "Belum ada analisis");
+    setText("agg-people", p);
+    setText("agg-vehicles", v);
+    setText("ai-sub", sub);
+    renderClassBars();
+  }
 
   function renderClassBars() {
-    const max = Math.max(...CLASS_LABELS.map(([k]) => agg[k]), 1);
-    document.getElementById("class-bars").innerHTML = CLASS_LABELS.map(([k, label, cls]) => {
-      const pct = Math.round((agg[k] / max) * 100);
-      return `<div class="cbar ${cls}"><div class="top"><span class="lbl">${label}</span><span class="n">${agg[k].toLocaleString()}</span></div>
-        <div class="track"><div class="fill" style="width:${pct}%"></div></div></div>`;
-    }).join("");
+    const n = run ? run.frames : 0;
+    const vals = CLASS_LABELS.map(([k]) => (n ? (run.by[k] || 0) / n : 0));
+    const max = Math.max(...vals, 0.001);
+    document.getElementById("class-bars").innerHTML = CLASS_LABELS.map(([, label, cls], i) =>
+      `<div class="cbar ${cls}"><div class="top"><span class="lbl">${label}</span><span class="n">${n ? dec(vals[i]) : "—"}</span></div>
+        <div class="track"><div class="fill" style="width:${Math.round((vals[i] / max) * 100)}%"></div></div></div>`).join("");
   }
 
-  /* ---------------- EVENT FEED ---------------- */
-  const EVENTS = [
-    ["info", c => `${c.name} (${c.city}): traffic flow nominal`],
-    ["info", c => `Vehicle throughput steady — ${c.road}`],
-    ["warn", c => `Congestion building at ${c.name} · ${c.city}`],
-    ["warn", c => `Slow traffic detected — ${c.road}`],
-    ["info", c => `AI vision re-sync · ${c.name}`],
-    ["alert", c => `Stopped vehicle flagged — ${c.name} (${c.city})`],
-    ["warn", c => `Feed degraded on ${c.name} · retrying`]
-  ];
+  /* ---------------- EVENT LOG ---------------- */
+  // Only things that actually happened: feeds opened, live or failed, servers
+  // changing state, analysis summaries, and the engine's own density alerts.
   function addEvent(sev, msg) {
     const feed = document.getElementById("ai-events");
     const row = document.createElement("div");
     row.className = `event sev-${sev} new`;
-    row.innerHTML = `<span class="t">${new Date().toTimeString().slice(0, 8)}</span><span class="msg">${esc(msg)}</span>`;
+    row.innerHTML = `<span class="t">${wib(Date.now())}</span><span class="msg">${esc(msg)}</span>`;
     feed.prepend(row);
     while (feed.children.length > 40) feed.removeChild(feed.lastChild);
-    if (sev === "alert") flashAlert();
-  }
-  function tickEvents() {
-    const online = cams.filter(c => c.active);
-    if (!online.length) return;
-    const cam = online[(Math.random() * online.length) | 0];
-    const [sev, fn] = EVENTS[(Math.random() * EVENTS.length) | 0];
-    addEvent(sev, fn(cam));
-  }
-  let alertTimer;
-  function flashAlert() {
-    const pill = document.getElementById("alert-pill");
-    pill.textContent = "▲ EVENT FLAGGED"; pill.classList.add("warn");
-    clearTimeout(alertTimer);
-    alertTimer = setTimeout(() => { pill.textContent = "● OPERATIONAL"; pill.classList.remove("warn"); }, 4000);
+    if (sev === "alert") flashPill("▲ PERINGATAN AI");
   }
 
-  /* ---------------- SPARKLINE ---------------- */
-  function pushSpark(v) { sparkData.push(v); sparkData.shift(); drawSpark(); }
+  // Header pill: what the AI engine is doing right now; alerts flash over it briefly.
+  let pillBase = "● AI SIAGA", pillTimer = null;
+  function setPill(text) { pillBase = text; if (!pillTimer) setText("alert-pill", text); }
+  function flashPill(text) {
+    const pill = document.getElementById("alert-pill");
+    pill.textContent = text; pill.classList.add("warn");
+    clearTimeout(pillTimer);
+    pillTimer = setTimeout(() => { pillTimer = null; pill.textContent = pillBase; pill.classList.remove("warn"); }, 4000);
+  }
+
+  /* ---------------- TIMELINE ---------------- */
+  // Vehicles in frame, one bar per second, for the latest analysis run.
   function drawSpark() {
     const cv = document.getElementById("spark");
     const dpr = window.devicePixelRatio || 1;
@@ -384,14 +583,18 @@
     cv.width = w * dpr; cv.height = h * dpr;
     const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
-    const max = Math.max(...sparkData, 1), bw = w / sparkData.length;
-    sparkData.forEach((v, i) => {
-      const bh = (v / max) * (h - 4);
-      ctx.fillStyle = i === sparkData.length - 1 ? "#37e39b" : "rgba(55,227,155,0.35)";
-      ctx.fillRect(i * bw + 1, h - bh, Math.max(1, bw - 2), bh);
+    const data = run ? run.series : [];
+    setText("spark-rng", data.length ? `kendaraan di frame per detik · ${run.label}` : "belum ada analisis — buka feed AI sebuah kamera");
+    if (!data.length) return;
+    const max = Math.max(...data, 1), bw = w / SERIES_SECS;
+    data.forEach((v, i) => {
+      const bh = Math.max(1, (v / max) * (h - 4));
+      const x = (SERIES_SECS - data.length + i) * bw;   // newest at the right edge
+      ctx.fillStyle = i === data.length - 1 && !run.end ? "#37e39b" : "rgba(55,227,155,0.35)";
+      ctx.fillRect(x + 1, h - bh, Math.max(1, bw - 2), bh);
     });
   }
-  function tickClock() { document.getElementById("clock").textContent = new Date().toTimeString().slice(0, 8); }
+  function tickClock() { setText("clock", wib(Date.now())); }
 
   /* ---------------- CAMERA MODAL + AI ENGINE ---------------- */
   // openedCam: the camera the user clicked. currentCam: whatever is playing now
@@ -399,15 +602,24 @@
   let engine = null, openedCam = null, currentCam = null, lastSource = null;
   function ensureEngine() {
     if (engine) return engine;
-    engine = new VisionEngine(document.getElementById("cam-canvas"), document.getElementById("cam-video"),
-      { onStats: onEngineStats, onStatus: onEngineStatus, onEvent: (sev, msg) => addEvent(sev, msg) });
+    engine = new VisionEngine(document.getElementById("cam-canvas"), document.getElementById("cam-video"), {
+      onStats: onEngineStats, onStatus: onEngineStatus,
+      // the engine's alerts come from real detections: say which feed they came from
+      onEvent: (sev, msg) => addEvent(sev, run && !run.end ? `${msg} · ${run.label}` : msg)
+    });
     return engine;
   }
   function initPresets() {
     const sel = document.getElementById("hls-preset");
-    sel.innerHTML = `<option value="">— kamera live lain —</option>`
-      + featured.map(c => `<option value="${esc(c.hls)}">${esc(c.city)} · ${esc(c.name)}</option>`).join("");
+    renderPresets();
     sel.onchange = () => { if (!sel.value) return; document.getElementById("hls-url").value = sel.value; play("hls", sel.value); };
+  }
+  // curated cameras for "Sumber lain"; ones without video are marked, not hidden
+  function renderPresets() {
+    const sel = document.getElementById("hls-preset"), keep = sel.value;
+    sel.innerHTML = `<option value="">— kamera live lain —</option>`
+      + featured.map(c => `<option value="${esc(c.hls)}">${esc(c.city)} · ${esc(c.name)}${noVideo(c) ? " (tanpa video)" : ""}</option>`).join("");
+    sel.value = keep;
   }
 
   const camNote = cam => (cam.kind === "city"
@@ -428,10 +640,11 @@
     document.getElementById("cam-modal").classList.add("open");
     if (cam.hls) play("hls", cam.hls);
     else { currentCam = cam; setHeader(cam); ensureEngine().stop(); onEngineStatus("offline", "Kamera ini tidak menyediakan stream publik."); }
-    addEvent("info", `Opened AI feed · ${cam.name} (${cam.city})`);
+    addEvent("info", `Feed AI dibuka · ${cam.name} (${cam.city})`);
   }
 
   function play(mode, arg) {
+    endRun();   // a new source ends the previous analysis run
     lastSource = { mode, arg };
     // "Kamera ini" lights up only while the clicked camera itself is playing
     setSrcActive(mode === "hls"
@@ -456,7 +669,12 @@
     ensureEngine().start(mode, arg);
   }
 
-  function closeCamera() { if (engine) engine.stop(); document.getElementById("cam-modal").classList.remove("open"); }
+  function closeCamera() {
+    if (engine) engine.stop();
+    endRun();
+    setPill("● AI SIAGA");
+    document.getElementById("cam-modal").classList.remove("open");
+  }
   function setSrcActive(id) { ["btn-hls", "btn-sim", "btn-webcam", "btn-file"].forEach(b => document.getElementById(b).classList.toggle("active", b === id)); }
 
   // What the video area shows for each engine state; "ready" means live, so no overlay.
@@ -464,16 +682,36 @@
     loading:    { spin: true, title: "Memuat model AI…", sub: "Hanya di awal, sekitar 10–20 detik." },
     connecting: { spin: true, title: "Menghubungkan ke kamera…" },
     offline:    { icon: "⚠", title: "Kamera sedang offline", retry: "Coba lagi", other: true,
-                  sub: "Server kamera ini sedang tidak merespons. Banyak kamera berbagi server yang sama, jadi satu kota bisa offline bersamaan. Coba kamera berlabel LIVE." },
+                  sub: "Kamera ini tidak mengirim video saat ini. Banyak kamera berbagi server yang sama, jadi satu kota bisa mati bersamaan. Titik abu-abu di peta berarti tanpa video; coba titik yang berwarna." },
     paused:     { icon: "❚❚", title: "Feed dijeda", retry: "Lanjutkan" },
     idle:       { icon: "■", title: "Feed dihentikan", retry: "Putar lagi" }
   };
+  const PILL = { loading: "● AI MEMUAT", connecting: "● MENYAMBUNG" };
 
   function onEngineStatus(stt, text) {
     const st = document.getElementById("model-status");
     st.className = "model-status " + ({ ready: "ready", loading: "loading", connecting: "loading", offline: "err" }[stt] || "");
     document.getElementById("model-text").textContent = text;
     document.querySelector("#cam-modal .feed-top .rec").hidden = stt !== "ready";
+
+    // the clicked camera's own stream, not SIM / webcam / a file played over it
+    const camFeed = lastSource && lastSource.mode === "hls" && currentCam && lastSource.arg === currentCam.hls ? currentCam : null;
+    const sim = !!lastSource && lastSource.mode === "sim";
+    if (stt === "ready") {
+      setPill(sim ? "● SIMULASI" : "● AI AKTIF");
+      if (!sim && (!run || run.end)) {
+        startRun(camFeed ? `${camFeed.name} (${camFeed.city})`
+          : ({ webcam: "Webcam kamu", file: "File video" }[lastSource.mode] || "Stream HLS pilihan"));
+        if (camFeed) { noteFeed(camFeed, true); addEvent("info", `Feed live · ${camFeed.name} (${camFeed.city})`); }
+      }
+    } else {
+      setPill(PILL[stt] || "● AI SIAGA");
+      if (stt !== "loading" && stt !== "connecting") endRun();
+    }
+    if (stt === "offline") {
+      if (camFeed) noteFeed(camFeed, false, text);
+      if (currentCam) addEvent("warn", `Feed offline · ${currentCam.name} (${currentCam.city})`);
+    }
 
     const o = OVERLAY[stt];
     document.getElementById("feed-overlay").hidden = !o;
@@ -487,9 +725,6 @@
     retry.textContent = o.retry || "";
     document.getElementById("fo-other").hidden = !(o.other && featured.length);
     resetMetrics();
-    if (stt === "offline" && currentCam) addEvent("warn", `Feed offline · ${currentCam.name} (${currentCam.city})`);
-    if (stt === "ready") noteHostFromFeed(currentCam, true);
-    if (stt === "offline") noteHostFromFeed(currentCam, false);
   }
 
   function resetMetrics() {
@@ -504,6 +739,7 @@
     document.getElementById("det-list").innerHTML = rows.length
       ? rows.map(([c, n]) => `<div class="det-row"><span class="cls">${esc(c.toUpperCase())}</span><span class="conf">× ${n}</span></div>`).join("")
       : `<div class="det-row"><span class="cls" style="color:var(--text-faint)">— no objects in frame —</span></div>`;
+    if (engine.mode !== "sim") recordStats(s);
   }
   function initModal() {
     document.getElementById("cam-close").onclick = closeCamera;
@@ -534,20 +770,16 @@
     initTabs();
     initPresets();
     initModal();
-    renderClassBars();
+    renderPanel();
     drawSpark();
     tickClock();
 
-    const live = cams.filter(c => c.active).length;
     const nCity = cams.filter(c => c.kind === "city").length;
-    addEvent("info", `SENTINEL online · ${cams.length} CCTV nodes (${cams.length - nCity} tol, ${nCity} kota · ${live} active)`);
-    addEvent("info", `${bts.length} representative BTS sites loaded · AI engine standby`);
+    addEvent("info", `SENTINEL online · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(bts.length)} BTS representatif`);
 
     setInterval(tickClock, 1000);
-    setInterval(tickAnalytics, 2000);
-    setInterval(tickEvents, 4500);
     window.addEventListener("resize", drawSpark);
-    startHostHealth();
+    startChecks();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

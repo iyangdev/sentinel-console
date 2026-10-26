@@ -310,8 +310,8 @@
 
       // generic, anonymous anomaly alerting (density spikes only)
       if (this._alertCooldown > 0) { this._alertCooldown--; return; }
-      if (people >= 6) { this.onEvent("alert", `High pedestrian density detected (${people})`); this._alertCooldown = 90; }
-      else if (vehicles >= 8) { this.onEvent("warn", `Traffic congestion forming (${vehicles} vehicles)`); this._alertCooldown = 90; }
+      if (people >= 6) { this.onEvent("alert", `Kepadatan pejalan kaki tinggi (${people} orang)`); this._alertCooldown = 90; }
+      else if (vehicles >= 8) { this.onEvent("warn", `Lalu lintas mulai padat (${vehicles} kendaraan)`); this._alertCooldown = 90; }
     }
 
     _tickFps() {

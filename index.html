@@ -41,10 +41,10 @@
       </nav>
 
       <div class="header-right">
-        <div class="hstat"><div class="k">REGION</div><div class="v">DKI JAKARTA</div></div>
-        <div class="hstat"><div class="k">UTC+07 · LOCAL</div><div class="v" id="clock">--:--:--</div></div>
-        <div class="hstat"><div class="k">THREAT LEVEL</div><div class="v" style="color:var(--accent)">NOMINAL</div></div>
-        <div class="alert-pill" id="alert-pill">● OPERATIONAL</div>
+        <div class="hstat"><div class="k">WILAYAH</div><div class="v" id="hdr-region">INDONESIA</div></div>
+        <div class="hstat"><div class="k">WAKTU · WIB</div><div class="v" id="clock">--:--:--</div></div>
+        <div class="hstat"><div class="k">KAMERA BERVIDEO</div><div class="v" id="hdr-live" style="color:var(--accent)">mengecek…</div></div>
+        <div class="alert-pill" id="alert-pill">● AI SIAGA</div>
       </div>
     </header>
 
@@ -61,7 +61,10 @@
           <div class="toggle-row on" data-layer="labels"><span class="lbl">Street Labels</span><span class="switch"></span></div>
           <div class="toggle-row" data-layer="heat"><span class="lbl">Density Heatmap</span><span class="switch"></span></div>
           <div class="toggle-row" data-layer="coverage"><span class="lbl">Coverage Radius</span><span class="switch"></span></div>
-          <div class="svr-status" id="svr-status">Status server kamera: menunggu…</div>
+          <div class="svr-status">
+            <div id="svr-status">Memeriksa video kamera…</div>
+            <div class="svr-note">Dicek per server tiap 4 menit; kamera yang terlihat di peta dicek satu per satu.</div>
+          </div>
 
           <div class="panel-head" style="border-top:1px solid var(--border)">
             <span class="dot"></span> CCTV Nodes <span class="count" id="cam-count">0</span>
@@ -78,26 +81,28 @@
         <div id="map"></div>
         <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
         <div class="hud-corner bl"></div><div class="hud-corner br"></div>
-        <div class="map-badge">LIVE SATELLITE · CCTV TOL + KOTA · BTS</div>
+        <div class="map-badge">CITRA SATELIT ESRI · CCTV TOL + KOTA · BTS</div>
         <div class="map-coords" id="map-coords">LAT -6.2088 · LNG 106.8456 · ZOOM 12</div>
       </section>
 
       <!-- RIGHT PANEL -->
       <aside class="panel right">
-        <div class="panel-head"><span class="dot"></span> AI Vision Analysis</div>
+        <div class="panel-head"><span class="dot"></span> Analisis AI</div>
         <div class="panel-scroll">
           <div class="ai-live">
+            <div class="ai-src" id="ai-src">Belum ada analisis</div>
             <div class="big">
-              <div class="ai-metric people"><div class="v" id="agg-people">0</div><div class="k">People / min</div></div>
-              <div class="ai-metric"><div class="v" id="agg-vehicles">0</div><div class="k">Vehicles / min</div></div>
+              <div class="ai-metric people"><div class="v" id="agg-people">—</div><div class="k">Orang di frame</div></div>
+              <div class="ai-metric"><div class="v" id="agg-vehicles">—</div><div class="k">Kendaraan di frame</div></div>
             </div>
+            <div class="ai-sub" id="ai-sub"></div>
           </div>
 
-          <div class="section-label">Detection Classes (network-wide)</div>
+          <div class="section-label">Kelas deteksi · rata-rata per frame</div>
           <div class="class-bars" id="class-bars"></div>
 
           <div class="panel-head" style="border-top:1px solid var(--border)">
-            <span class="dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span> Event Feed
+            <span class="dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span> Log Peristiwa
           </div>
           <div class="events" id="ai-events"></div>
         </div>
@@ -108,16 +113,16 @@
     <footer>
       <div class="timeline">
         <div class="tl-head">
-          <span class="ttl">Network Activity</span>
-          <span class="rng">last 60 min · detections/min</span>
+          <span class="ttl">Aktivitas Deteksi</span>
+          <span class="rng" id="spark-rng">belum ada analisis</span>
         </div>
         <canvas id="spark"></canvas>
       </div>
       <div class="legend">
         <div class="li"><span class="sw" style="background:var(--accent)"></span> CCTV tol</div>
         <div class="li"><span class="sw" style="background:var(--amber)"></span> CCTV kota</div>
-        <div class="li"><span class="sw" style="background:var(--text-faint)"></span> Offline</div>
-        <div class="li"><span class="sw" style="background:#55606b;opacity:.55"></span> Server mati</div>
+        <div class="li"><span class="sw" style="background:var(--text-faint)"></span> Nonaktif (registry)</div>
+        <div class="li"><span class="sw" style="background:#55606b;opacity:.55"></span> Tanpa video</div>
         <div class="li"><span class="sw" style="background:#c084fc"></span> BTS site</div>
         <div class="li"><span class="sw" style="background:var(--cyan)"></span> People</div>
       </div>
