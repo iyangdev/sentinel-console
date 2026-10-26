@@ -25,6 +25,13 @@
   const camStatus = c => (c.active ? "online" : "offline");
   const OP_COLOR = { Telkomsel: "#ff4d5e", Indosat: "#f5a524", "XL Axiata": "#38bdf8", Tri: "#c084fc", Smartfren: "#37e39b" };
 
+  // Live stream-server health: cameras on one host share a server, so when that
+  // server is down the whole group goes dark at once. hostStatus is filled in by
+  // probing one stream per host (see startHostHealth); markers then dim to match.
+  const hostStatus = {};            // host -> "up" | "down"  (absent = unknown)
+  function hostOf(cam) { try { return cam.hls ? new URL(cam.hls).host : null; } catch (e) { return null; } }
+  function camDown(cam) { const h = hostOf(cam); return !!h && hostStatus[h] === "down"; }
+
   /* ---------------- MAP ---------------- */
   function initMap() {
     map = L.map("map", { zoomControl: true, attributionControl: true, minZoom: 5, maxZoom: 18, preferCanvas: true })
@@ -64,12 +71,22 @@
   }
 
   function featuredIcon(cam) {
-    const s = camStatus(cam);
+    const cls = ["cam-marker"];
+    if (camDown(cam)) cls.push("down");
+    else if (camStatus(cam) !== "online") cls.push("offline");
+    if (cam.kind === "city") cls.push("city");
     return L.divIcon({
       className: "",
-      html: `<div class="cam-marker ${s === "online" ? "" : "offline"} ${cam.kind === "city" ? "city" : ""}"><span class="ping"></span><span class="core"></span></div>`,
+      html: `<div class="${cls.join(" ")}"><span class="ping"></span><span class="core"></span></div>`,
       iconSize: [14, 14], iconAnchor: [7, 7]
     });
+  }
+
+  // marker style for a non-featured camera, honouring live host status
+  function circleStyle(cam) {
+    if (camDown(cam)) return { color: "#55606b", fillColor: "#55606b", opacity: 0.4, fillOpacity: 0.12 };
+    const col = cam.active ? KIND_COLOR[cam.kind] : "#6f8a7e";
+    return { color: col, fillColor: col, opacity: 0.85, fillOpacity: cam.active ? 0.5 : 0.25 };
   }
 
   function renderMarkers() {
@@ -80,11 +97,7 @@
       if (cam.featured != null) {
         m = L.marker([cam.lat, cam.lng], { icon: featuredIcon(cam), zIndexOffset: 1000 });
       } else {
-        const col = cam.active ? KIND_COLOR[cam.kind] : "#6f8a7e";
-        m = L.circleMarker([cam.lat, cam.lng], {
-          radius: 3.5, color: col, weight: 1, opacity: 0.85,
-          fillColor: col, fillOpacity: cam.active ? 0.5 : 0.25
-        });
+        m = L.circleMarker([cam.lat, cam.lng], Object.assign({ radius: 3.5, weight: 1 }, circleStyle(cam)));
       }
       m.addTo(cam.kind === "city" ? cityLayer : markerLayer);
       m.bindPopup(popupHtml(cam));
@@ -133,6 +146,83 @@
     });
   }
 
+  /* ---------------- STREAM-SERVER HEALTH ---------------- */
+  // Reachability of one stream URL. A cross-origin GET that merely *loads* (even
+  // when CORS hides the body) proves the server answered; only a real transport
+  // failure — DNS, refused, TLS, timeout — counts as down. An http stream can't
+  // load on this https page at all, so it's treated as unreachable up front.
+  function reachable(url) {
+    if (location.protocol === "https:" && /^http:\/\//i.test(url)) return Promise.resolve(false);
+    const hit = (mode) => new Promise(res => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6500);
+      fetch(url, { mode, cache: "no-store", signal: ctrl.signal })
+        .then(() => { clearTimeout(timer); res(true); })
+        .catch(() => { clearTimeout(timer); res(false); });
+    });
+    // cors first (clean success); if it throws, no-cors separates a CORS block
+    // (server is up) from a dead host (both fail).
+    return hit("cors").then(ok => ok || hit("no-cors"));
+  }
+
+  function hostCameras() {
+    const groups = {};
+    cams.forEach(c => { const h = hostOf(c); if (h) (groups[h] = groups[h] || []).push(c); });
+    return groups;
+  }
+
+  async function sweepHostHealth() {
+    const groups = hostCameras();
+    const hosts = Object.keys(groups);
+    if (!hosts.length) return;
+    setSvrStatus("Status server kamera: mengecek…");
+    await Promise.all(hosts.map(async h => {
+      const sample = groups[h].slice().sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999)).slice(0, 2);
+      const up = (await Promise.all(sample.map(cam => reachable(cam.hls)))).some(Boolean);
+      hostStatus[h] = up ? "up" : "down";
+    }));
+    applyHostStatus();
+    const up = hosts.filter(h => hostStatus[h] === "up").length;
+    const dimmed = cams.filter(camDown).length;
+    setSvrStatus(`Server kamera: ${up}/${hosts.length} online` + (dimmed ? ` · ${dimmed} kamera diredupkan` : ""));
+    addEvent(up < hosts.length ? "warn" : "info",
+      `Cek server CCTV · ${up}/${hosts.length} host online` + (dimmed ? `, ${dimmed} kamera offline diredupkan` : ""));
+  }
+
+  function startHostHealth() {
+    setTimeout(sweepHostHealth, 1500);                  // let the map paint first
+    setInterval(sweepHostHealth, 4 * 60 * 1000);        // re-check every 4 min
+  }
+
+  // Re-style existing markers and list LEDs in place — no full re-render, so an
+  // open popup stays open.
+  function applyHostStatus() {
+    cams.forEach(cam => {
+      const m = markers[cam._i];
+      if (!m) return;
+      if (cam.featured != null) m.setIcon(featuredIcon(cam));
+      else if (m.setStyle) m.setStyle(circleStyle(cam));
+    });
+    document.querySelectorAll("#camera-list .cam-item").forEach(row => {
+      const cam = cams[+row.dataset.i];
+      const led = cam && row.querySelector(".stat-led");
+      if (led) led.className = `stat-led led-${camDown(cam) ? "down" : camStatus(cam)}${cam.kind === "city" ? " kind-city" : ""}`;
+    });
+  }
+
+  function setSvrStatus(text) {
+    const el = document.getElementById("svr-status");
+    if (el) el.textContent = text;
+  }
+
+  // A live feed opening or failing is ground truth about its host — fold it in now.
+  function noteHostFromFeed(cam, up) {
+    const h = cam && hostOf(cam);
+    if (!h || hostStatus[h] === (up ? "up" : "down")) return;
+    hostStatus[h] = up ? "up" : "down";
+    applyHostStatus();
+  }
+
   /* ---------------- CITY SELECTOR + LIST ---------------- */
   function initCitySelect() {
     const counts = {};
@@ -162,7 +252,7 @@
     el.innerHTML = list.slice(0, 400).map(cam => {
       const tag = cam.featured != null ? `<span class="badge-live">LIVE</span>` : `<span class="cid">${esc(cam.city)}</span>`;
       return `<div class="cam-item" data-i="${cam._i}">
-        <span class="stat-led led-${camStatus(cam)}${cam.kind === "city" ? " kind-city" : ""}"></span>
+        <span class="stat-led led-${camDown(cam) ? "down" : camStatus(cam)}${cam.kind === "city" ? " kind-city" : ""}"></span>
         <div class="meta"><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${esc(cam.road)} · ${esc(cam.opName)}</div></div>
         ${tag}</div>`;
     }).join("");
@@ -398,6 +488,8 @@
     document.getElementById("fo-other").hidden = !(o.other && featured.length);
     resetMetrics();
     if (stt === "offline" && currentCam) addEvent("warn", `Feed offline · ${currentCam.name} (${currentCam.city})`);
+    if (stt === "ready") noteHostFromFeed(currentCam, true);
+    if (stt === "offline") noteHostFromFeed(currentCam, false);
   }
 
   function resetMetrics() {
@@ -455,6 +547,7 @@
     setInterval(tickAnalytics, 2000);
     setInterval(tickEvents, 4500);
     window.addEventListener("resize", drawSpark);
+    startHostHealth();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
