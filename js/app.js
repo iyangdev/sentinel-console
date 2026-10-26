@@ -176,10 +176,12 @@
       : s.st === "presumed" ? "kamera lain di server ini berjalan; kamera ini belum dicek"
       : s.st === "unknown" ? (cam.active ? "menunggu pengecekan" : "registry: nonaktif")
       : s.why + (s.src === "host" ? " (hasil cek server)" : "");
+    const st = camStats[cam._i], an = st && st.mins.length ? camSummary(st) : null;
     return `<div class="popup-title" style="color:${KIND_COLOR[cam.kind]}">${esc(cam.name) || "CCTV"}</div>
       <div class="popup-row">${kind} · ${esc(cam.city)} · ${esc(cam.road)}</div>
       <div class="popup-row">${esc(cam.opName)}</div>
       <div class="popup-row" style="color:${col}">● ${label} <span style="color:var(--text-faint)">· ${esc(detail)}</span></div>
+      ${an ? `<div class="popup-row popup-an">${lvlBadge(an.avgV)} rata-rata ${dec(an.avgV)} kendaraan di frame · ${dur(an.ms)} dianalisis</div>` : ""}
       ${hostOf(cam) === JM_HOST ? `<div class="popup-note">Tayangan resmi CCTV Jasa Marga ada di aplikasi <a href="${TRAVOY_URL}" target="_blank" rel="noopener">Travoy</a>.</div>` : ""}
       <div class="popup-btn" data-i="${cam._i}">▶ OPEN AI FEED</div>`;
   }
@@ -461,11 +463,14 @@
         <div class="meta"><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${esc(cam.road)} · ${esc(cam.opName)}</div></div>
         ${rowTag(cam)}</div>`).join("")
       + (hidden ? `<div class="cam-hidden">${fmt(hidden)} kamera tanpa video disembunyikan</div>` : "");
-    el.querySelectorAll(".cam-item").forEach(row => {
-      const cam = cams[+row.dataset.i];
-      row.onclick = () => { map.flyTo([cam.lat, cam.lng], 16, { duration: 0.8 }); const mk = markers[cam._i]; if (mk) mk.openPopup(); };
-    });
+    el.querySelectorAll(".cam-item").forEach(row => { row.onclick = () => focusCamera(cams[+row.dataset.i]); });
     document.getElementById("cam-count").textContent = list.length;
+  }
+
+  function focusCamera(cam) {
+    map.flyTo([cam.lat, cam.lng], 16, { duration: 0.8 });
+    const mk = markers[cam._i];
+    if (mk) mk.openPopup();
   }
 
   function initFilter() {
@@ -536,22 +541,28 @@
   const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} dtk` : `${Math.floor(s / 60)} mnt ${s % 60} dtk`; };
   let run = null, panelAt = 0;
 
-  function startRun(label) {
+  // cam: the map camera whose own stream this run plays, or null (webcam, file, custom URL)
+  function startRun(label, cam) {
     endRun();
-    run = { label, start: Date.now(), end: 0, frames: 0, sumP: 0, sumV: 0, peakP: 0, peakV: 0,
+    run = { label, cam, start: Date.now(), end: 0, frames: 0, sumP: 0, sumV: 0, peakP: 0, peakV: 0,
             by: {}, recent: [], series: [], sec: 0, secSum: 0, secN: 0 };
-    renderPanel();
-    drawSpark();
+    renderAnalytics();
   }
 
   function endRun() {
     if (!run || run.end) return;
     run.end = Date.now();
+    const st = run.cam && camStats[run.cam._i];
+    if (st && run.frames) st.ms += run.end - run.start;
     if (run.frames) addEvent("info", `Analisis selesai · ${run.label} · ${dur(run.end - run.start)}, `
-      + `rata-rata ${dec(run.sumV / run.frames)} kendaraan/frame (puncak ${run.peakV})`);
-    renderPanel();
-    drawSpark();
+      + `rata-rata ${dec(run.sumV / run.frames)} kendaraan/frame (puncak ${run.peakV})`
+      + (run.cam ? ` · ${levelOf(run.sumV / run.frames).label.toLowerCase()}` : ""));
+    renderAnalytics();
+    if (run.cam) refreshPopup(run.cam);
   }
+
+  // everything that shows analysis results: right panel, timeline, feed window
+  function renderAnalytics() { renderPanel(); drawSpark(); renderDensity(); renderCamStats(); }
 
   function recordStats(s) {
     if (!run || run.end) return;
@@ -569,7 +580,8 @@
       run.sec = sec; run.secSum = 0; run.secN = 0;
     }
     run.secSum += s.vehicles; run.secN++;
-    if (now - panelAt > 500) { panelAt = now; renderPanel(); drawSpark(); }
+    if (run.cam) recordMinute(run.cam, s, now);
+    if (now - panelAt > 500) { panelAt = now; renderPanel(); drawSpark(); renderDensity(); }
   }
 
   function renderPanel() {
@@ -599,6 +611,166 @@
     document.getElementById("class-bars").innerHTML = CLASS_LABELS.map(([, label, cls], i) =>
       `<div class="cbar ${cls}"><div class="top"><span class="lbl">${label}</span><span class="n">${n ? dec(vals[i]) : "—"}</span></div>
         <div class="track"><div class="fill" style="width:${Math.round((vals[i] / max) * 100)}%"></div></div></div>`).join("");
+  }
+
+  /* ---------------- PER-CAMERA ANALYTICS ---------------- */
+  // Every analysed frame of a map camera's own stream also goes into that camera's
+  // one-minute buckets, kept while this page is open (a CSV download keeps them).
+  // "In frame" is what the AI sees at once. It doesn't follow vehicles from frame
+  // to frame, so this is not a count of vehicles passing.
+  const camStats = {};   // cam._i -> { cam, ms, last, mins: [{ t, frames, sumV, peakV, sumP, peakP, by }] }
+  const CHART_MINUTES = 60;
+  // Density from the average vehicles in frame: ramai from 4, padat from 8 (the 8 the
+  // engine already warns at on a single frame). A rough guide: how many vehicles fit
+  // in frame depends on each camera's angle and zoom, and the AI sees fewer in the dark.
+  const LEVELS = [
+    { max: 4, label: "LANCAR", color: "#37e39b" },
+    { max: 8, label: "RAMAI", color: "#f5a524" },
+    { max: Infinity, label: "PADAT", color: "#ff4d5e" }
+  ];
+  const levelOf = avg => LEVELS.find(l => avg < l.max);
+  const lvlBadge = avg => { const l = levelOf(avg); return `<span class="lvl" style="--lvl:${l.color}">${l.label}</span>`; };
+
+  function recordMinute(cam, s, now) {
+    const st = camStats[cam._i] || (camStats[cam._i] = { cam, ms: 0, last: 0, mins: [] });
+    const t = now - now % 60000;   // WIB is a whole number of hours from UTC, so minutes line up
+    let b = st.mins[st.mins.length - 1];
+    if (!b || b.t !== t) st.mins.push(b = { t, frames: 0, sumV: 0, peakV: 0, sumP: 0, peakP: 0, by: {} });
+    b.frames++;
+    b.sumV += s.vehicles; b.peakV = Math.max(b.peakV, s.vehicles);
+    b.sumP += s.people; b.peakP = Math.max(b.peakP, s.people);
+    for (const k in s.byClass) b.by[k] = (b.by[k] || 0) + s.byClass[k];
+    st.last = now;
+  }
+
+  // all minutes of one camera: time analysed (including a run still going), average and peak
+  function camSummary(st) {
+    let frames = 0, sumV = 0, peakV = 0;
+    st.mins.forEach(b => { frames += b.frames; sumV += b.sumV; peakV = Math.max(peakV, b.peakV); });
+    const live = !!run && !run.end && run.cam === st.cam;
+    return { avgV: frames ? sumV / frames : 0, peakV, ms: st.ms + (live ? Date.now() - run.start : 0) };
+  }
+  const analysed = () => Object.values(camStats).filter(st => st.mins.length).sort((a, b) => b.last - a.last);
+
+  // Feed window: the camera on screen. Live, its density over the last 10 s; otherwise
+  // its average so far. Below, one bar per minute analysed.
+  function renderDensity() {
+    const cam = lastSource && lastSource.mode === "hls" ? currentCam : null;
+    const box = document.getElementById("dens");
+    box.hidden = !cam;   // SIM, webcam, files and custom URLs aren't map cameras
+    if (!cam) return;
+    const st = camStats[cam._i], live = !!run && !run.end && run.cam === cam && run.recent.length > 0;
+    let lvl = "", sub;
+    if (live) {
+      const v = run.recent.reduce((a, r) => a + r.v, 0) / run.recent.length;
+      lvl = lvlBadge(v); sub = `${dec(v)} kendaraan di frame · 10 dtk terakhir`;
+    } else if (st && st.mins.length) {
+      const s = camSummary(st);
+      lvl = lvlBadge(s.avgV); sub = `rata-rata ${dec(s.avgV)} kendaraan di frame · ${dur(s.ms)} dianalisis`;
+    } else sub = "Belum ada data. Kepadatan muncul begitu video kamera ini dianalisis.";
+    document.getElementById("dens-lvl").innerHTML = lvl;
+    setText("dens-sub", sub);
+    document.getElementById("dens-csv").hidden = !(st && st.mins.length);
+    drawMinutes(document.getElementById("dens-chart"), st, live);
+  }
+
+  // One bar per minute analysed, newest at the right, coloured by density. Dashed
+  // guides at 4 and 8; a dotted line where the camera wasn't analysed in between.
+  function drawMinutes(cv, st, live) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight || 70;
+    cv.width = w * dpr; cv.height = h * dpr;
+    const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    const mins = st ? st.mins.slice(-CHART_MINUTES) : [];
+    if (!mins.length || !w) return;
+    const pw = w - 14, ph = h - 13;   // plot area; guide labels on the right, times below
+    const avgs = mins.map(b => b.sumV / b.frames);
+    const top = Math.max(10, ...avgs) * 1.1;
+    const y = v => ph - (v / top) * ph;
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.fillStyle = "#46564f"; ctx.strokeStyle = "rgba(207,234,221,0.14)";
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.setLineDash([3, 3]);
+    [4, 8].forEach(v => {
+      const gy = Math.round(y(v)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(pw, gy); ctx.stroke();
+      ctx.fillText(String(v), w, gy);
+    });
+    const slot = pw / Math.max(mins.length, 15);   // a few minutes stay bars, not slabs
+    const x0 = pw - slot * mins.length;
+    ctx.strokeStyle = "rgba(207,234,221,0.3)"; ctx.setLineDash([1, 2]);
+    mins.forEach((b, i) => {
+      const x = x0 + i * slot;
+      if (i && b.t - mins[i - 1].t > 60000) {
+        ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, ph); ctx.stroke();
+      }
+      const bh = Math.max(1, ph - y(avgs[i]));
+      ctx.globalAlpha = live && i === mins.length - 1 ? 1 : 0.7;
+      ctx.fillStyle = levelOf(avgs[i]).color;
+      ctx.fillRect(x + 1, ph - bh, Math.max(1, slot - 2), bh);
+    });
+    ctx.globalAlpha = 1; ctx.setLineDash([]);
+    // first and last minute shown, in WIB; the first one only if it has room
+    const hm = t => wib(t).slice(0, 5);
+    const last = hm(mins[mins.length - 1].t) + " WIB", first = hm(mins[0].t);
+    ctx.fillStyle = "#6f8a7e"; ctx.textBaseline = "bottom";
+    ctx.fillText(last, pw, h);
+    if (mins.length > 1 && x0 + ctx.measureText(first).width + 8 < pw - ctx.measureText(last).width) {
+      ctx.textAlign = "left"; ctx.fillText(first, x0, h);
+    }
+  }
+
+  // Right panel: every camera analysed since the page opened, latest first.
+  function renderCamStats() {
+    const el = document.getElementById("cam-stats"), list = analysed();
+    document.getElementById("csv-all").hidden = !list.length;
+    el.innerHTML = list.length
+      ? list.map(st => {
+          const s = camSummary(st);
+          return `<div class="cs-row" data-i="${st.cam._i}">${lvlBadge(s.avgV)}
+            <div class="meta"><div class="nm">${esc(st.cam.name) || "CCTV"}</div>
+            <div class="sb">${dur(s.ms)} · rata-rata ${dec(s.avgV)} kendaraan di frame · puncak ${s.peakV}</div></div></div>`;
+        }).join("")
+        + `<div class="cs-note">Kepadatan dari rata-rata kendaraan yang terlihat AI di frame: ramai ≥4, padat ≥8. `
+        + `Data per menit hanya ada selama halaman ini terbuka; unduh CSV untuk menyimpannya.</div>`
+      : `<div class="cs-note">Belum ada kamera yang dianalisis. Buka feed AI sebuah kamera: kepadatannya dicatat per menit di sini.</div>`;
+    el.querySelectorAll(".cs-row").forEach(row => { row.onclick = () => focusCamera(cams[+row.dataset.i]); });
+  }
+
+  // CSV: one row per camera per minute, WIB times, generic counts only.
+  const wibMinute = t => new Date(t + 7 * 3600e3).toISOString().slice(0, 16).replace("T", " ");   // WIB = UTC+7, no DST
+  const CSV_HEAD = ["kamera_id", "kamera", "kota", "ruas", "operator", "menit_wib", "frame_dianalisis",
+    "rata_kendaraan_di_frame", "puncak_kendaraan_di_frame", "rata_orang_di_frame", "puncak_orang_di_frame",
+    "rata_mobil", "rata_motor", "rata_bus", "rata_truk", "rata_sepeda", "kepadatan"];
+  function downloadCsv(list, name) {
+    const cell = v => typeof v === "number" ? String(v) : `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+    const rows = [CSV_HEAD.join(",")];
+    list.forEach(st => st.mins.forEach(b => {
+      const avg = x => Math.round((x / b.frames) * 100) / 100;
+      rows.push([st.cam.id, st.cam.name, st.cam.city, st.cam.road, st.cam.opName, wibMinute(b.t), b.frames,
+        avg(b.sumV), b.peakV, avg(b.sumP), b.peakP,
+        ...["car", "motorcycle", "bus", "truck", "bicycle"].map(c => avg(b.by[c] || 0)),
+        levelOf(b.sumV / b.frames).label.toLowerCase()].map(cell).join(","));
+    }));
+    // the BOM makes spreadsheet apps read it as UTF-8
+    const url = URL.createObjectURL(new Blob(["﻿" + rows.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "kamera";
+  const fileStamp = () => wibMinute(Date.now()).replace(/[-: ]/g, "").replace(/^(\d{8})/, "$1-");   // 20261027-0815
+
+  function initAnalytics() {
+    document.getElementById("dens-csv").onclick = () => {
+      const st = currentCam && camStats[currentCam._i];
+      if (st) downloadCsv([st], `sentinel-${slug(st.cam.name)}-${fileStamp()}.csv`);
+    };
+    document.getElementById("csv-all").onclick = () => {
+      const list = analysed();
+      if (list.length) downloadCsv(list, `sentinel-analitik-${fileStamp()}.csv`);
+    };
   }
 
   /* ---------------- EVENT LOG ---------------- */
@@ -715,6 +887,7 @@
       }[mode];
     }
     document.querySelector("#cam-modal .feed-top .rec").lastChild.textContent = mode === "sim" ? " SIM" : " REC";
+    renderDensity();   // the camera on screen may have changed
     if (mode !== "sim") onEngineStatus("connecting", mode === "webcam" ? "Meminta akses webcam…" : "Menghubungkan…");
     ensureEngine().start(mode, arg);
   }
@@ -751,7 +924,7 @@
       setPill(sim ? "● SIMULASI" : "● AI AKTIF");
       if (!sim && (!run || run.end)) {
         startRun(camFeed ? `${camFeed.name} (${camFeed.city})`
-          : ({ webcam: "Webcam kamu", file: "File video" }[lastSource.mode] || "Stream HLS pilihan"));
+          : ({ webcam: "Webcam kamu", file: "File video" }[lastSource.mode] || "Stream HLS pilihan"), camFeed);
         if (camFeed) { noteFeed(camFeed, true); addEvent("info", `Feed live · ${camFeed.name} (${camFeed.city})`); }
       }
     } else {
@@ -820,15 +993,15 @@
     initTabs();
     initPresets();
     initModal();
-    renderPanel();
-    drawSpark();
+    initAnalytics();
+    renderAnalytics();
     tickClock();
 
     const nCity = cams.filter(c => c.kind === "city").length;
     addEvent("info", `SENTINEL online · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(bts.length)} BTS representatif`);
 
     setInterval(tickClock, 1000);
-    window.addEventListener("resize", drawSpark);
+    window.addEventListener("resize", () => { drawSpark(); renderDensity(); });
     startChecks();
   }
 

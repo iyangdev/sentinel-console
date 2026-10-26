@@ -103,6 +103,12 @@
           <div class="class-bars" id="class-bars"></div>
 
           <div class="panel-head" style="border-top:1px solid var(--border)">
+            <span class="dot"></span> Analitik per Kamera
+            <button type="button" class="csv-btn" id="csv-all" hidden>⤓ CSV</button>
+          </div>
+          <div class="cam-stats" id="cam-stats"></div>
+
+          <div class="panel-head" style="border-top:1px solid var(--border)">
             <span class="dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span> Log Peristiwa
           </div>
           <div class="events" id="ai-events"></div>
@@ -165,6 +171,17 @@
           <div class="mmetric people"><div class="v" id="m-people">—</div><div class="k">People</div></div>
           <div class="mmetric"><div class="v" id="m-vehicles">—</div><div class="k">Vehicles</div></div>
           <div class="mmetric"><div class="v" id="m-fps">—</div><div class="k">FPS</div></div>
+        </div>
+
+        <!-- this camera's density: live over the last 10 s, plus one bar per minute analysed -->
+        <div class="dens" id="dens" hidden>
+          <div class="dens-head"><span class="k">Kepadatan</span><span id="dens-lvl"></span></div>
+          <div class="dens-sub" id="dens-sub"></div>
+          <canvas id="dens-chart"></canvas>
+          <div class="dens-foot">
+            <span>Per menit · ramai ≥4, padat ≥8</span>
+            <button type="button" class="csv-btn" id="dens-csv" hidden>⤓ CSV</button>
+          </div>
         </div>
 
         <div class="det-list-head">Live Detections</div>
