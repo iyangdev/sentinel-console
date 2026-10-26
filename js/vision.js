@@ -158,7 +158,8 @@
           fail("HLS unsupported in this browser");
           return;
         }
-        this._hlsTimeout = setTimeout(() => fail("HLS timeout / unreachable"), 15000);
+        // generous: some city cameras (720p60) take ~10 s to deliver their first segment
+        this._hlsTimeout = setTimeout(() => fail("HLS timeout / unreachable"), 25000);
       });
     }
 

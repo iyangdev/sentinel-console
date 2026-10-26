@@ -207,6 +207,9 @@ header {
 .cam-marker.degraded .ping { border-color: var(--amber); }
 .cam-marker.offline .core { border-color: var(--text-faint); background: rgba(70,86,79,0.3); }
 .cam-marker.offline .ping { display: none; }
+.cam-marker.city .core { border-color: var(--amber); background: rgba(245,165,36,0.35); }
+.cam-marker.city .ping { border-color: var(--amber); }
+.cam-item .stat-led.led-online.kind-city { background: var(--amber); box-shadow: 0 0 7px var(--amber); }
 @keyframes ping { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
 
 .leaflet-popup-content-wrapper { background: var(--panel-solid); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; box-shadow: 0 6px 30px rgba(0,0,0,0.6); }

@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Regenerate js/city-cctv-data.js — public CITY-STREET traffic cameras (ATCS/Dishub).
+
+Toll-road cameras come from one national registry (tools/update_cctv.py). City
+street cameras don't: every city runs its own portal, so each one gets a small
+adapter below that turns its camera list into the console's record shape.
+
+A city is imported only when its portal is public (no login) AND its HLS
+streams are CORS-open — playable from any site, which the in-browser AI engine
+needs. Portals that lock their streams to their own site, need a login, or are
+down are listed in PORTALS instead, as links to the official viewer. We do not
+proxy or otherwise work around a portal's restrictions.
+
+Only road / intersection cameras are kept: city portals also carry park, river,
+building-security and neighbourhood cameras, which are out of scope.
+
+Usage:
+    python3 tools/update_city_cctv.py
+"""
+import datetime
+import json
+import pathlib
+import re
+import urllib.request
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+OUT = ROOT / "js" / "city-cctv-data.js"
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+
+
+def get_json(url, headers=None):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def to_float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Kota Yogyakarta — cctv.jogjakota.go.id (Pemkot Yogyakarta)
+#
+# The portal's own map loads `home/getdata` by XHR; the CodeIgniter backend
+# answers AJAX requests only ("No direct script access allowed" otherwise), so
+# we declare X-Requested-With like the page does — no Referer or cookies needed.
+# Streams on cctvjss.jogjakota.go.id send Access-Control-Allow-Origin: *.
+# ---------------------------------------------------------------------------
+JOGJA_ROAD_CATEGORIES = {
+    "1": "ATCS simpang",          # "Simpang …" signalised intersections
+    "33": "Jalan kawasan Tugu",
+    "34": "Jalan Kotabaru",
+}
+JOGJA_FEATURED = ["1", "21", "431"]   # Simpang APMD, Simpang SGM, Selatan Tugu — verified live 2026-10-26
+
+
+def src_yogyakarta():
+    rows = get_json("https://cctv.jogjakota.go.id/home/getdata", {"X-Requested-With": "XMLHttpRequest"})
+    cams = []
+    for r in rows:
+        cat = str(r.get("cctv_category"))
+        hls = (r.get("cctv_link") or "").strip()
+        lat, lng = to_float(r.get("cctv_latitude")), to_float(r.get("cctv_longitude"))
+        if cat not in JOGJA_ROAD_CATEGORIES or ".m3u8" not in hls or lat is None or lng is None:
+            continue
+        cid = str(r.get("cctv_id"))
+        district = (r.get("kecamatan_nama") or "").strip().title()
+        cam = {
+            "id": f"YK-{cid}",
+            "name": re.sub(r"\s+", " ", (r.get("cctv_title") or "").replace("_", " ")).strip(),
+            "road": district or JOGJA_ROAD_CATEGORIES[cat],
+            "op": "pemkot-yk",
+            "opName": f"Pemkot Yogyakarta · {JOGJA_ROAD_CATEGORIES[cat]}",
+            "city": "Yogyakarta",
+            "lat": round(lat, 6),
+            "lng": round(lng, 6),
+            "hls": hls,
+            "active": True,
+            "kind": "city",
+        }
+        if cid in JOGJA_FEATURED:
+            cam["featured"] = 100 + JOGJA_FEATURED.index(cid)
+        cams.append(cam)
+    return cams
+
+
+SOURCES = [
+    ("Kota Yogyakarta — CCTV Berbasis Kewilayahan", "https://cctv.jogjakota.go.id/", src_yogyakarta),
+]
+
+# Official portals whose streams can't be embedded here: shown as view-only links.
+PORTALS = [
+    {"city": "Bandung", "name": "Pelindung — Bandung Command Center", "url": "https://pelindung.bandung.go.id/",
+     "reason": "stream hanya bisa diputar di situs resminya"},
+    {"city": "Bandung", "name": "ATCS Dishub Kota Bandung", "url": "https://atcs-dishub.bandung.go.id/",
+     "reason": "sedang tidak aktif"},
+    {"city": "Semarang", "name": "CCTV Kota Semarang", "url": "https://cctv.semarangkota.go.id/",
+     "reason": "perlu login"},
+]
+
+
+def main():
+    cams, sources = [], []
+    for name, url, fn in SOURCES:
+        try:
+            got = fn()
+        except Exception as e:  # noqa: BLE001 — one dead portal shouldn't block the rest
+            print(f"  ! {name}: {type(e).__name__}: {e}")
+            got = []
+        sources.append({"name": name, "url": url, "count": len(got)})
+        cams.extend(got)
+        print(f"  {len(got):4d}  {name}")
+
+    meta = {"pulled": datetime.date.today().isoformat(), "sources": sources, "portals": PORTALS}
+    rows = ",\n".join("  " + json.dumps(c, ensure_ascii=False, separators=(",", ":")) for c in cams)
+    OUT.write_text(
+        "/* AUTO-GENERATED by tools/update_city_cctv.py — do not edit by hand.\n"
+        " *\n"
+        " * Public CITY-STREET traffic cameras (ATCS/Dishub) from official city portals\n"
+        " * whose HLS streams are public and CORS-open. Road/intersection cameras only.\n"
+        " * Respect each portal's terms; don't poll them aggressively.\n"
+        " */\n"
+        f"window.CITY_CCTV_SOURCE = {json.dumps(meta, ensure_ascii=False)};\n\n"
+        f"window.CITY_CCTV_CAMERAS = [\n{rows}\n];\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {OUT.relative_to(ROOT)}: {len(cams)} city cameras, "
+          f"{sum('featured' in c for c in cams)} featured, {len(PORTALS)} view-only portals")
+
+
+if __name__ == "__main__":
+    main()

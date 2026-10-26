@@ -7,13 +7,18 @@
   "use strict";
 
   const INDONESIA = [-2.5, 117.0];
-  const cams = (window.CCTV_CAMERAS || []).map((c, i) => Object.assign({ _i: i }, c));
+  // toll-road cameras (BPJT registry) + city-street cameras (city ATCS/Dishub portals)
+  const cams = (window.CCTV_CAMERAS || []).map(c => Object.assign({ kind: "toll" }, c))
+    .concat(window.CITY_CCTV_CAMERAS || [])
+    .map((c, i) => Object.assign({ _i: i }, c));
   const SOURCE = window.CCTV_SOURCE || {};
+  const CITY_SOURCE = window.CITY_CCTV_SOURCE || {};
+  const KIND_COLOR = { toll: "#37e39b", city: "#f5a524" };
   const bts = window.BTS_SITES || [];
   const BTS_SOURCE = window.BTS_SOURCE || {};
   const featured = cams.filter(c => c.featured != null).sort((a, b) => a.featured - b.featured);
 
-  let map, imagery, labelsLayer, markerLayer, coverageLayer, heatLayer, btsLayer;
+  let map, imagery, labelsLayer, markerLayer, cityLayer, coverageLayer, heatLayer, btsLayer;
   const markers = {};
   const state = { city: "", q: "" };
 
@@ -36,6 +41,7 @@
     ).addTo(map);
 
     markerLayer = L.layerGroup().addTo(map);
+    cityLayer = L.layerGroup().addTo(map);
     coverageLayer = L.layerGroup();
     heatLayer = L.layerGroup();
     btsLayer = L.layerGroup();
@@ -61,25 +67,26 @@
     const s = camStatus(cam);
     return L.divIcon({
       className: "",
-      html: `<div class="cam-marker ${s === "online" ? "" : "offline"}"><span class="ping"></span><span class="core"></span></div>`,
+      html: `<div class="cam-marker ${s === "online" ? "" : "offline"} ${cam.kind === "city" ? "city" : ""}"><span class="ping"></span><span class="core"></span></div>`,
       iconSize: [14, 14], iconAnchor: [7, 7]
     });
   }
 
   function renderMarkers() {
     markerLayer.clearLayers();
+    cityLayer.clearLayers();
     cams.forEach(cam => {
       let m;
       if (cam.featured != null) {
         m = L.marker([cam.lat, cam.lng], { icon: featuredIcon(cam), zIndexOffset: 1000 });
       } else {
-        const col = cam.active ? "#37e39b" : "#6f8a7e";
+        const col = cam.active ? KIND_COLOR[cam.kind] : "#6f8a7e";
         m = L.circleMarker([cam.lat, cam.lng], {
           radius: 3.5, color: col, weight: 1, opacity: 0.85,
           fillColor: col, fillOpacity: cam.active ? 0.5 : 0.25
         });
       }
-      m.addTo(markerLayer);
+      m.addTo(cam.kind === "city" ? cityLayer : markerLayer);
       m.bindPopup(popupHtml(cam));
       m.on("popupopen", () => {
         const btn = document.querySelector(".popup-btn[data-i='" + cam._i + "']");
@@ -90,8 +97,9 @@
   }
 
   function popupHtml(cam) {
-    return `<div class="popup-title">${esc(cam.name) || "CCTV"}</div>
-      <div class="popup-row">${esc(cam.city)} · ${esc(cam.road)}</div>
+    const kind = cam.kind === "city" ? "CCTV KOTA" : "CCTV TOL";
+    return `<div class="popup-title" style="color:${KIND_COLOR[cam.kind]}">${esc(cam.name) || "CCTV"}</div>
+      <div class="popup-row">${kind} · ${esc(cam.city)} · ${esc(cam.road)}</div>
       <div class="popup-row">${esc(cam.opName)} · ${camStatus(cam).toUpperCase()}</div>
       <div class="popup-btn" data-i="${cam._i}">▶ OPEN AI FEED</div>`;
   }
@@ -153,7 +161,7 @@
     el.innerHTML = list.slice(0, 400).map(cam => {
       const tag = cam.featured != null ? `<span class="badge-live">LIVE</span>` : `<span class="cid">${esc(cam.city)}</span>`;
       return `<div class="cam-item" data-i="${cam._i}">
-        <span class="stat-led led-${camStatus(cam)}"></span>
+        <span class="stat-led led-${camStatus(cam)}${cam.kind === "city" ? " kind-city" : ""}"></span>
         <div class="meta"><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${esc(cam.road)} · ${esc(cam.opName)}</div></div>
         ${tag}</div>`;
     }).join("");
@@ -173,10 +181,16 @@
   function initSourceNote() {
     const el = document.getElementById("src-note");
     if (!el) return;
-    el.innerHTML = `CCTV: <a href="${esc(SOURCE.url || "#")}" target="_blank" rel="noopener">BPJT · Kementerian PU</a> — `
-      + `${SOURCE.count || cams.length} toll-road cameras (snapshot ${esc(SOURCE.snapshot || "—")}).<br>`
+    const citySrc = (CITY_SOURCE.sources || []).filter(s => s.count)
+      .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a> (${s.count})`).join(", ");
+    const portals = (CITY_SOURCE.portals || [])
+      .map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.city)} — ${esc(p.name)}</a> <span style="opacity:.7">(${esc(p.reason)})</span>`).join("<br>");
+    el.innerHTML = `CCTV tol: <a href="${esc(SOURCE.url || "#")}" target="_blank" rel="noopener">BPJT · Kementerian PU</a> — `
+      + `${SOURCE.count || 0} cameras (snapshot ${esc(SOURCE.snapshot || "—")}).<br>`
+      + (citySrc ? `CCTV kota: ${citySrc}.<br>` : "")
       + `BTS: ${bts.length} <em>representative</em> cell-sites — illustrative infrastructure, not real coordinates and not linked to any device.<br>`
-      + `Generic traffic analytics only — no face recognition, no identity tracking.`;
+      + `Generic traffic analytics only — no face recognition, no plate reading, no identity tracking.`
+      + (portals ? `<div style="margin-top:8px">Portal resmi (lihat langsung di situsnya):<br>${portals}</div>` : "");
   }
 
   /* ---------------- LAYER TOGGLES ---------------- */
@@ -187,6 +201,7 @@
         const on = row.classList.contains("on");
         const layer = row.dataset.layer;
         if (layer === "cctv") on ? markerLayer.addTo(map) : map.removeLayer(markerLayer);
+        if (layer === "citycctv") on ? cityLayer.addTo(map) : map.removeLayer(cityLayer);
         if (layer === "labels") on ? labelsLayer.addTo(map) : map.removeLayer(labelsLayer);
         if (layer === "heat") { if (on) { buildHeat(); heatLayer.addTo(map); } else map.removeLayer(heatLayer); }
         if (layer === "coverage") { if (on) { buildCoverage(); coverageLayer.addTo(map); } else map.removeLayer(coverageLayer); }
@@ -305,7 +320,9 @@
     currentCam = cam;
     document.getElementById("cam-title").textContent = cam.name || "CCTV";
     document.getElementById("cam-id").textContent = `${cam.city} · ${cam.road} · ${cam.opName}`;
-    document.getElementById("cam-note").textContent = "Public toll-road traffic camera (BPJT) · generic object detection, no biometric identification";
+    document.getElementById("cam-note").textContent = (cam.kind === "city"
+      ? `Public city traffic camera (${cam.opName.split(" · ")[0]})`
+      : "Public toll-road traffic camera (BPJT)") + " · generic object detection, no biometric identification";
     document.getElementById("hls-url").value = cam.hls || "";
     document.getElementById("hls-preset").value = featured.some(f => f.hls === cam.hls) ? cam.hls : "";
     document.getElementById("cam-modal").classList.add("open");
@@ -361,7 +378,8 @@
     tickClock();
 
     const live = cams.filter(c => c.active).length;
-    addEvent("info", `SENTINEL online · ${cams.length} CCTV nodes nationwide (${live} active)`);
+    const nCity = cams.filter(c => c.kind === "city").length;
+    addEvent("info", `SENTINEL online · ${cams.length} CCTV nodes (${cams.length - nCity} tol, ${nCity} kota · ${live} active)`);
     addEvent("info", `${bts.length} representative BTS sites loaded · AI engine standby`);
 
     setInterval(tickClock, 1000);
