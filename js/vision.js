@@ -18,6 +18,9 @@
   // server's bandwidth (several city portals cap viewing time too); one click resumes.
   const WATCH_LIMIT_MS = 5 * 60 * 1000;
 
+  // what the boxes on the video say
+  const LABEL = { person: "ORANG", car: "MOBIL", truck: "TRUK", bus: "BUS", motorcycle: "MOTOR", bicycle: "SEPEDA" };
+
   const COLORS = {
     person: "#38bdf8",
     car: "#37e39b",
@@ -158,7 +161,7 @@
           settled = true; clear();
           try { await v.play(); } catch (e) {}
           if (gen !== this._gen) return;
-          this.onStatus("ready", this._liveText("LIVE CCTV"));
+          this.onStatus("ready", this._liveText("CCTV LANGSUNG"));
           this._watchTimer = setTimeout(() => this._courtesyPause(gen), WATCH_LIMIT_MS);
           resolve(true);
         };
@@ -181,7 +184,7 @@
             if (!data.fatal) return;
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch (e) {} }
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR && settled) { try { hls.startLoad(); return; } catch (e) {} }
-            fail(`Server kamera tidak merespons atau kameranya sedang mati (${data.details || "error"}).`);
+            fail(`Server kamera tidak merespons atau kameranya sedang mati${data.details ? ` (kode: ${data.details})` : ""}.`);
           });
         } else if (v.canPlayType("application/vnd.apple.mpegurl")) {
           v.src = url;
@@ -236,7 +239,7 @@
             // keep showing the stream, but stop trying to read its pixels.
             if (/secur|cross-origin|tainted/i.test(String(e && e.message))) {
               this.detectDisabled = true;
-              this.onStatus("ready", "LIVE · detection blocked (CORS-restricted feed)");
+              this.onStatus("ready", "CCTV LANGSUNG · deteksi AI diblokir (server kamera tidak mengizinkan)");
             }
           }
         }
@@ -283,7 +286,7 @@
       ctx.moveTo(x + w - t, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - t);
       ctx.stroke();
       // label
-      const label = `${cls.toUpperCase()} ${(score * 100) | 0}%`;
+      const label = `${LABEL[cls] || cls.toUpperCase()} ${(score * 100) | 0}%`;
       ctx.font = "10px 'JetBrains Mono', monospace";
       const tw = ctx.measureText(label).width + 10;
       ctx.fillStyle = "rgba(5,8,10,0.82)";

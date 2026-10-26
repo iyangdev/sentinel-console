@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SENTINEL Console</title>
-  <meta name="description" content="Map-based public-space monitoring console with live AI vision analytics over public CCTV points." />
+  <title>SENTINEL · Konsol CCTV</title>
+  <meta name="description" content="Konsol peta CCTV publik Indonesia dengan analitik lalu lintas AI yang berjalan di browser." />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -30,14 +30,14 @@
         </div>
         <div>
           <div class="title">SENTINEL</div>
-          <div class="sub">SEE THE WHOLE PICTURE</div>
+          <div class="sub">LIHAT GAMBARAN UTUH</div>
         </div>
       </div>
 
       <nav class="tabs">
-        <div class="tab active" data-tab="live">Live</div>
-        <div class="tab" data-tab="analytics">Analytics</div>
-        <div class="tab" data-tab="cameras">Cameras</div>
+        <div class="tab active" data-tab="live">Langsung</div>
+        <div class="tab" data-tab="analytics">Analitik</div>
+        <div class="tab" data-tab="cameras">Kamera</div>
       </nav>
 
       <div class="header-right">
@@ -52,26 +52,26 @@
     <div id="main">
       <!-- LEFT PANEL -->
       <aside class="panel left">
-        <div class="panel-head"><span class="dot"></span> Control Layers</div>
+        <div class="panel-head"><span class="dot"></span> Kontrol Peta</div>
         <div class="panel-scroll">
-          <div class="section-label">Map Overlays</div>
+          <div class="section-label">Lapisan</div>
           <div class="toggle-row on" data-layer="cctv"><span class="lbl">CCTV Tol (BPJT)</span><span class="switch"></span></div>
           <div class="toggle-row on" data-layer="citycctv"><span class="lbl">CCTV Kota (ATCS)</span><span class="switch"></span></div>
           <div class="toggle-row" data-layer="novideo"><span class="lbl">Sembunyikan tanpa video</span><span class="switch"></span></div>
-          <div class="toggle-row" data-layer="bts"><span class="lbl">BTS / Cell Sites</span><span class="switch"></span></div>
-          <div class="toggle-row on" data-layer="labels"><span class="lbl">Street Labels</span><span class="switch"></span></div>
-          <div class="toggle-row" data-layer="heat"><span class="lbl">Density Heatmap</span><span class="switch"></span></div>
-          <div class="toggle-row" data-layer="coverage"><span class="lbl">Coverage Radius</span><span class="switch"></span></div>
+          <div class="toggle-row" data-layer="bts"><span class="lbl">BTS (menara seluler)</span><span class="switch"></span></div>
+          <div class="toggle-row on" data-layer="labels"><span class="lbl">Label jalan</span><span class="switch"></span></div>
+          <div class="toggle-row" data-layer="heat"><span class="lbl">Sebaran kamera</span><span class="switch"></span></div>
+          <div class="toggle-row" data-layer="coverage"><span class="lbl">Jangkauan kamera (±350 m)</span><span class="switch"></span></div>
           <div class="svr-status">
             <div id="svr-status">Memeriksa video kamera…</div>
             <div class="svr-note">Dicek per server tiap 4 menit; kamera yang terlihat di peta dicek satu per satu.</div>
           </div>
 
           <div class="panel-head" style="border-top:1px solid var(--border)">
-            <span class="dot"></span> CCTV Nodes <span class="count" id="cam-count">0</span>
+            <span class="dot"></span> Daftar CCTV <span class="count" id="cam-count">0</span>
           </div>
           <div class="cam-filter"><select id="city-select"></select></div>
-          <div class="cam-filter"><input id="cam-filter" placeholder="Filter by name / road / operator…" spellcheck="false" /></div>
+          <div class="cam-filter"><input id="cam-filter" placeholder="Cari nama, ruas, atau operator…" spellcheck="false" /></div>
           <div id="camera-list"></div>
           <div class="src-note" id="src-note"></div>
         </div>
@@ -83,7 +83,7 @@
         <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
         <div class="hud-corner bl"></div><div class="hud-corner br"></div>
         <div class="map-badge">CITRA SATELIT ESRI · CCTV TOL + KOTA · BTS</div>
-        <div class="map-coords" id="map-coords">LAT -6.2088 · LNG 106.8456 · ZOOM 12</div>
+        <div class="map-coords" id="map-coords">LINTANG -6.2088 · BUJUR 106.8456 · ZOOM 12</div>
       </section>
 
       <!-- RIGHT PANEL -->
@@ -128,10 +128,10 @@
       <div class="legend">
         <div class="li"><span class="sw" style="background:var(--accent)"></span> CCTV tol</div>
         <div class="li"><span class="sw" style="background:var(--amber)"></span> CCTV kota</div>
-        <div class="li"><span class="sw" style="background:var(--text-faint)"></span> Nonaktif (registry)</div>
+        <div class="li"><span class="sw" style="background:var(--text-faint)"></span> Nonaktif (data sumber)</div>
         <div class="li"><span class="sw" style="background:#55606b;opacity:.55"></span> Tanpa video</div>
-        <div class="li"><span class="sw" style="background:#c084fc"></span> BTS site</div>
-        <div class="li"><span class="sw" style="background:var(--cyan)"></span> People</div>
+        <div class="li"><span class="sw" style="background:#c084fc"></span> Lokasi BTS</div>
+        <div class="li"><span class="sw" style="background:var(--cyan)"></span> Orang terdeteksi</div>
       </div>
     </footer>
   </div>
@@ -141,7 +141,7 @@
     <div class="modal">
       <div class="modal-feed">
         <div class="feed-top">
-          <span class="rec"><span class="d"></span> REC</span>
+          <span class="rec"><span class="d"></span> LANGSUNG</span>
           <span class="ftitle" id="cam-title">—</span>
           <span class="fid" id="cam-id">—</span>
         </div>
@@ -157,19 +157,19 @@
           <div class="fo-sub" id="fo-sub"></div>
           <div class="fo-actions">
             <button type="button" class="fo-btn" id="fo-retry" hidden>Coba lagi</button>
-            <button type="button" class="fo-btn ghost" id="fo-other" hidden>Pilih kamera live lain</button>
+            <button type="button" class="fo-btn ghost" id="fo-other" hidden>Pilih kamera lain</button>
           </div>
         </div>
       </div>
 
       <div class="modal-side">
-        <div class="mhead">Analysis <span class="x" id="cam-close">✕</span></div>
+        <div class="mhead">Analisis <span class="x" id="cam-close" title="Tutup">✕</span></div>
 
-        <div class="model-status" id="model-status"><span class="led"></span><span id="model-text">AI engine idle</span></div>
+        <div class="model-status" id="model-status"><span class="led"></span><span id="model-text">Mesin AI siaga</span></div>
 
         <div class="mmetrics">
-          <div class="mmetric people"><div class="v" id="m-people">—</div><div class="k">People</div></div>
-          <div class="mmetric"><div class="v" id="m-vehicles">—</div><div class="k">Vehicles</div></div>
+          <div class="mmetric people"><div class="v" id="m-people">—</div><div class="k">Orang</div></div>
+          <div class="mmetric"><div class="v" id="m-vehicles">—</div><div class="k">Kendaraan</div></div>
           <div class="mmetric"><div class="v" id="m-fps">—</div><div class="k">FPS</div></div>
         </div>
 
@@ -184,7 +184,7 @@
           </div>
         </div>
 
-        <div class="det-list-head">Live Detections</div>
+        <div class="det-list-head">Deteksi saat ini</div>
         <div class="det-list" id="det-list"></div>
 
         <!-- optional: other video sources; the clicked camera plays without touching this -->
@@ -197,11 +197,11 @@
             <div class="src-btn" id="btn-file">File video</div>
           </div>
           <div class="hls-row">
-            <select id="hls-preset" title="Kamera live yang sudah diverifikasi"></select>
+            <select id="hls-preset" title="Kamera pilihan yang sudah diverifikasi"></select>
             <input id="hls-url" placeholder="https://…/index.m3u8" spellcheck="false" />
-            <div class="src-btn go" id="hls-go">Connect</div>
+            <div class="src-btn go" id="hls-go">Sambungkan</div>
           </div>
-          <div class="src-btn stop" id="btn-stop">Hentikan feed</div>
+          <div class="src-btn stop" id="btn-stop">Hentikan tayangan</div>
         </details>
         <input type="file" id="file-input" accept="video/*" style="display:none" />
       </div>

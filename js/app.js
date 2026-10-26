@@ -59,12 +59,13 @@
 
   /* ---------------- MAP ---------------- */
   function initMap() {
-    map = L.map("map", { zoomControl: true, attributionControl: true, minZoom: 5, maxZoom: 18, preferCanvas: true })
+    map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 5, maxZoom: 18, preferCanvas: true })
       .setView(INDONESIA, 5);
+    L.control.zoom({ zoomInTitle: "Perbesar", zoomOutTitle: "Perkecil" }).addTo(map);
 
     imagery = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { attribution: "Imagery © Esri · CCTV © BPJT Kementerian PU · BTS: representative", maxZoom: 18 }
+      { attribution: "Citra © Esri · CCTV © BPJT Kementerian PU · BTS: representatif", maxZoom: 18 }
     ).addTo(map);
 
     labelsLayer = L.tileLayer(
@@ -92,7 +93,7 @@
   function updateCoords() {
     const c = map.getCenter();
     document.getElementById("map-coords").textContent =
-      `LAT ${c.lat.toFixed(4)} · LNG ${c.lng.toFixed(4)} · ZOOM ${map.getZoom()}`;
+      `LINTANG ${c.lat.toFixed(4)} · BUJUR ${c.lng.toFixed(4)} · ZOOM ${map.getZoom()}`;
   }
 
   function featuredIcon(cam) {
@@ -174,7 +175,7 @@
     const detail = pending.has(cam._i) ? "mengecek kamera ini…"
       : s.st === "ok" ? `dicek ${wib(s.at)} WIB`
       : s.st === "presumed" ? "kamera lain di server ini berjalan; kamera ini belum dicek"
-      : s.st === "unknown" ? (cam.active ? "menunggu pengecekan" : "registry: nonaktif")
+      : s.st === "unknown" ? (cam.active ? "menunggu pengecekan" : "data sumber: nonaktif")
       : s.why + (s.src === "host" ? " (hasil cek server)" : "");
     const st = camStats[cam._i], an = st && st.mins.length ? camSummary(st) : null;
     return `<div class="popup-title" style="color:${KIND_COLOR[cam.kind]}">${esc(cam.name) || "CCTV"}</div>
@@ -183,7 +184,7 @@
       <div class="popup-row" style="color:${col}">● ${label} <span style="color:var(--text-faint)">· ${esc(detail)}</span></div>
       ${an ? `<div class="popup-row popup-an">${lvlBadge(an.avgV)} rata-rata ${dec(an.avgV)} kendaraan di frame · ${dur(an.ms)} dianalisis</div>` : ""}
       ${hostOf(cam) === JM_HOST ? `<div class="popup-note">Tayangan resmi CCTV Jasa Marga ada di aplikasi <a href="${TRAVOY_URL}" target="_blank" rel="noopener">Travoy</a>.</div>` : ""}
-      <div class="popup-btn" data-i="${cam._i}">▶ OPEN AI FEED</div>`;
+      <div class="popup-btn" data-i="${cam._i}">▶ BUKA ANALISIS AI</div>`;
   }
 
   /* lazily built heavy overlays */
@@ -207,8 +208,8 @@
       m.bindPopup(
         `<div class="popup-title" style="color:${col}">▲ ${esc(s.operator)}</div>
          <div class="popup-row">${esc(s.id)} · ${esc(s.city)}</div>
-         <div class="popup-row">${esc(s.band)} MHz · ${esc(s.g)} · cell ~${s.radius} m</div>
-         <div class="popup-row" style="color:var(--text-faint);margin-top:4px">Representative site · infrastructure layer only</div>`
+         <div class="popup-row">${esc(s.band)} MHz · ${esc(s.g)} · sel ~${s.radius} m</div>
+         <div class="popup-row" style="color:var(--text-faint);margin-top:4px">Lokasi representatif · hanya lapisan infrastruktur</div>`
       );
       m.addTo(btsLayer);
     });
@@ -321,7 +322,7 @@
   // A feed that plays or fails is the most direct check there is: record it.
   function noteFeed(cam, ok, why) {
     if (!cam || !cam.hls) return;
-    recordCheck(cam, ok ? { st: "ok", why: "" } : { st: "nostream", why: why || "Feed gagal diputar." });
+    recordCheck(cam, ok ? { st: "ok", why: "" } : { st: "nostream", why: why || "Tayangan gagal diputar." });
   }
 
   // Re-style one camera everywhere it shows, in place: marker, list row, open popup.
@@ -355,7 +356,7 @@
     if (!Object.keys(hostCheck).length) return;     // first sweep still running
     const t = tally();
     setText("svr-status", `Video tersedia: ${fmt(t.live)} kamera · tanpa video: ${fmt(t.none)}${hideNoVideo ? " (disembunyikan)" : ""}`
-      + (t.muted ? ` · nonaktif (registry): ${fmt(t.muted)}` : ""));
+      + (t.muted ? ` · nonaktif menurut data sumber: ${fmt(t.muted)}` : ""));
     setText("hdr-live", `${fmt(t.live)} / ${fmt(cams.length)}`);
   }
 
@@ -449,8 +450,8 @@
   }
 
   const ledClass = cam => `stat-led led-${noVideo(cam) ? "down" : looksLive(cam) ? "online" : "offline"}${cam.kind === "city" ? " kind-city" : ""}`;
-  // "LIVE" marks the curated cameras, but only while they actually have video
-  const rowTag = cam => (cam.featured != null && !noVideo(cam)) ? `<span class="badge-live">LIVE</span>` : `<span class="cid">${esc(cam.city)}</span>`;
+  // "LANGSUNG" marks the curated cameras, but only while they actually have video
+  const rowTag = cam => (cam.featured != null && !noVideo(cam)) ? `<span class="badge-live">LANGSUNG</span>` : `<span class="cid">${esc(cam.city)}</span>`;
 
   function renderList() {
     const el = document.getElementById("camera-list");
@@ -486,12 +487,14 @@
       .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a> (${s.count})`).join(", ");
     const portals = (CITY_SOURCE.portals || [])
       .map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.city)} — ${esc(p.name)}</a> <span style="opacity:.7">(${esc(p.reason)})</span>`).join("<br>");
+    const snap = SOURCE.snapshot
+      ? new Date(SOURCE.snapshot).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "—";
     el.innerHTML = `CCTV tol: <a href="${esc(SOURCE.url || "#")}" target="_blank" rel="noopener">BPJT · Kementerian PU</a> — `
-      + `${SOURCE.count || 0} cameras (snapshot ${esc(SOURCE.snapshot || "—")}`
-      + (SOURCE.fixed ? `; ${SOURCE.fixed} stream URLs corrected from operator sites` : "") + `).<br>`
+      + `${fmt(SOURCE.count || 0)} kamera (data per ${esc(snap)}`
+      + (SOURCE.fixed ? `; ${SOURCE.fixed} URL stream diperbaiki dari situs operator` : "") + `).<br>`
       + (citySrc ? `CCTV kota: ${citySrc}.<br>` : "")
-      + `BTS: ${bts.length} <em>representative</em> cell-sites — illustrative infrastructure, not real coordinates and not linked to any device.<br>`
-      + `Generic traffic analytics only — no face recognition, no plate reading, no identity tracking.`
+      + `BTS: ${fmt(bts.length)} lokasi <em>representatif</em>, hanya ilustrasi infrastruktur: bukan koordinat asli dan tidak terhubung ke perangkat apa pun.<br>`
+      + `Hanya analitik lalu lintas umum: tanpa pengenalan wajah, tanpa pembacaan pelat nomor, tanpa pelacakan identitas.`
       + (portals ? `<div style="margin-top:8px">Portal resmi (lihat langsung di situsnya):<br>${portals}</div>` : "");
   }
 
@@ -535,6 +538,7 @@
     ["person", "Orang", "c-person"], ["car", "Mobil", ""], ["motorcycle", "Motor", ""],
     ["bus", "Bus", ""], ["truck", "Truk", ""], ["bicycle", "Sepeda", ""]
   ];
+  const CLASS_NAME = Object.fromEntries(CLASS_LABELS.map(([k, label]) => [k, label]));
   const SERIES_SECS = 120;
   // one decimal; a small non-zero average reads "<0,1" so it doesn't look like nothing was seen
   const dec = x => (x > 0 && x < 0.05 ? "<0,1" : (Math.round(x * 10) / 10).toLocaleString("id-ID"));
@@ -555,7 +559,7 @@
     const st = run.cam && camStats[run.cam._i];
     if (st && run.frames) st.ms += run.end - run.start;
     if (run.frames) addEvent("info", `Analisis selesai · ${run.label} · ${dur(run.end - run.start)}, `
-      + `rata-rata ${dec(run.sumV / run.frames)} kendaraan/frame (puncak ${run.peakV})`
+      + `rata-rata ${dec(run.sumV / run.frames)} kendaraan di frame (puncak ${run.peakV})`
       + (run.cam ? ` · ${levelOf(run.sumV / run.frames).label.toLowerCase()}` : ""));
     renderAnalytics();
     if (run.cam) refreshPopup(run.cam);
@@ -587,8 +591,8 @@
   function renderPanel() {
     const live = !!run && !run.end;
     let p = "—", v = "—", sub;
-    if (!run) sub = "Belum ada analisis. Klik titik kamera di peta, lalu ▶ OPEN AI FEED: hasil deteksi nyata muncul di sini.";
-    else if (!run.frames) sub = live ? "Menunggu frame pertama dianalisis…" : "Feed berhenti sebelum ada frame yang dianalisis.";
+    if (!run) sub = "Belum ada analisis. Klik titik kamera di peta, lalu ▶ BUKA ANALISIS AI: hasil deteksi nyata muncul di sini.";
+    else if (!run.frames) sub = live ? "Menunggu frame pertama dianalisis…" : "Tayangan berhenti sebelum ada frame yang dianalisis.";
     else {
       const win = live ? run.recent : null;   // live: the last 10 s · finished: the whole run
       const n = win ? win.length : run.frames;
@@ -597,7 +601,7 @@
       sub = `${win ? "Rata-rata 10 detik terakhir" : "Rata-rata seluruh analisis"} · puncak ${run.peakV} kendaraan, `
         + `${run.peakP} orang · ${dur((run.end || Date.now()) - run.start)}`;
     }
-    setText("ai-src", run ? `${live ? "● LIVE" : "■ SELESAI"} · ${run.label}` : "Belum ada analisis");
+    setText("ai-src", run ? `${live ? "● LANGSUNG" : "■ SELESAI"} · ${run.label}` : "Belum ada analisis");
     setText("agg-people", p);
     setText("agg-vehicles", v);
     setText("ai-sub", sub);
@@ -735,7 +739,7 @@
         }).join("")
         + `<div class="cs-note">Kepadatan dari rata-rata kendaraan yang terlihat AI di frame: ramai ≥4, padat ≥8. `
         + `Data per menit hanya ada selama halaman ini terbuka; unduh CSV untuk menyimpannya.</div>`
-      : `<div class="cs-note">Belum ada kamera yang dianalisis. Buka feed AI sebuah kamera: kepadatannya dicatat per menit di sini.</div>`;
+      : `<div class="cs-note">Belum ada kamera yang dianalisis. Buka analisis AI sebuah kamera: kepadatannya dicatat per menit di sini.</div>`;
     el.querySelectorAll(".cs-row").forEach(row => { row.onclick = () => focusCamera(cams[+row.dataset.i]); });
   }
 
@@ -807,7 +811,7 @@
     const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
     const data = run ? run.series : [];
-    setText("spark-rng", data.length ? `kendaraan di frame per detik · ${run.label}` : "belum ada analisis — buka feed AI sebuah kamera");
+    setText("spark-rng", data.length ? `kendaraan di frame per detik · ${run.label}` : "belum ada analisis");
     if (!data.length) return;
     const max = Math.max(...data, 1), bw = w / SERIES_SECS;
     data.forEach((v, i) => {
@@ -840,7 +844,7 @@
   // curated cameras for "Sumber lain"; ones without video are marked, not hidden
   function renderPresets() {
     const sel = document.getElementById("hls-preset"), keep = sel.value;
-    sel.innerHTML = `<option value="">— kamera live lain —</option>`
+    sel.innerHTML = `<option value="">— kamera pilihan lain —</option>`
       + featured.map(c => `<option value="${esc(c.hls)}">${esc(c.city)} · ${esc(c.name)}${noVideo(c) ? " (tanpa video)" : ""}</option>`).join("");
     sel.value = keep;
   }
@@ -863,7 +867,7 @@
     document.getElementById("cam-modal").classList.add("open");
     if (cam.hls) play("hls", cam.hls);
     else { currentCam = cam; setHeader(cam); ensureEngine().stop(); onEngineStatus("offline", "Kamera ini tidak menyediakan stream publik."); }
-    addEvent("info", `Feed AI dibuka · ${cam.name} (${cam.city})`);
+    addEvent("info", `Analisis AI dibuka · ${cam.name} (${cam.city})`);
   }
 
   function play(mode, arg) {
@@ -887,7 +891,8 @@
         file: "File video lokal · deteksi objek umum, tanpa identifikasi biometrik"
       }[mode];
     }
-    document.querySelector("#cam-modal .feed-top .rec").lastChild.textContent = mode === "sim" ? " SIM" : " REC";
+    // nothing is recorded: the badge says what is playing
+    document.querySelector("#cam-modal .feed-top .rec").lastChild.textContent = { sim: " SIMULASI", file: " REKAMAN" }[mode] || " LANGSUNG";
     renderDensity();   // the camera on screen may have changed
     if (mode !== "sim") onEngineStatus("connecting", mode === "webcam" ? "Meminta akses webcam…" : "Menghubungkan…");
     ensureEngine().start(mode, arg);
@@ -905,10 +910,10 @@
   const OVERLAY = {
     loading:    { spin: true, title: "Memuat model AI…", sub: "Hanya di awal, sekitar 10–20 detik." },
     connecting: { spin: true, title: "Menghubungkan ke kamera…" },
-    offline:    { icon: "⚠", title: "Kamera sedang offline", retry: "Coba lagi", other: true,
+    offline:    { icon: "⚠", title: "Kamera tidak mengirim video", retry: "Coba lagi", other: true,
                   sub: "Kamera ini tidak mengirim video saat ini. Banyak kamera berbagi server yang sama, jadi satu kota bisa mati bersamaan. Titik abu-abu di peta berarti tanpa video; coba titik yang berwarna." },
-    paused:     { icon: "❚❚", title: "Feed dijeda", retry: "Lanjutkan" },
-    idle:       { icon: "■", title: "Feed dihentikan", retry: "Putar lagi" }
+    paused:     { icon: "❚❚", title: "Tayangan dijeda", retry: "Lanjutkan" },
+    idle:       { icon: "■", title: "Tayangan dihentikan", retry: "Putar lagi" }
   };
   const PILL = { loading: "● AI MEMUAT", connecting: "● MENYAMBUNG" };
 
@@ -926,7 +931,7 @@
       if (!sim && (!run || run.end)) {
         startRun(camFeed ? `${camFeed.name} (${camFeed.city})`
           : ({ webcam: "Webcam kamu", file: "File video" }[lastSource.mode] || "Stream HLS pilihan"), camFeed);
-        if (camFeed) { noteFeed(camFeed, true); addEvent("info", `Feed live · ${camFeed.name} (${camFeed.city})`); }
+        if (camFeed) { noteFeed(camFeed, true); addEvent("info", `Tayangan berjalan · ${camFeed.name} (${camFeed.city})`); }
       }
     } else {
       setPill(PILL[stt] || "● AI SIAGA");
@@ -934,7 +939,7 @@
     }
     if (stt === "offline") {
       if (camFeed) noteFeed(camFeed, false, text);
-      if (currentCam) addEvent("warn", `Feed offline · ${currentCam.name} (${currentCam.city})`);
+      if (currentCam) addEvent("warn", `Tayangan terputus · ${currentCam.name} (${currentCam.city})`);
     }
 
     const o = OVERLAY[stt];
@@ -961,8 +966,8 @@
     document.getElementById("m-fps").textContent = s.fps;
     const rows = Object.entries(s.byClass).sort((a, b) => b[1] - a[1]);
     document.getElementById("det-list").innerHTML = rows.length
-      ? rows.map(([c, n]) => `<div class="det-row"><span class="cls">${esc(c.toUpperCase())}</span><span class="conf">× ${n}</span></div>`).join("")
-      : `<div class="det-row"><span class="cls" style="color:var(--text-faint)">— no objects in frame —</span></div>`;
+      ? rows.map(([c, n]) => `<div class="det-row"><span class="cls">${esc((CLASS_NAME[c] || c).toUpperCase())}</span><span class="conf">× ${n}</span></div>`).join("")
+      : `<div class="det-row"><span class="cls" style="color:var(--text-faint)">— tidak ada objek di frame —</span></div>`;
     if (engine.mode !== "sim") recordStats(s);
   }
   function initModal() {
@@ -975,7 +980,7 @@
     document.getElementById("btn-webcam").onclick = () => play("webcam");
     document.getElementById("btn-file").onclick = () => document.getElementById("file-input").click();
     document.getElementById("file-input").onchange = e => { const f = e.target.files[0]; if (f) play("file", f); };
-    document.getElementById("btn-stop").onclick = () => { if (engine) engine.stop(); onEngineStatus("idle", "Feed dihentikan."); };
+    document.getElementById("btn-stop").onclick = () => { if (engine) engine.stop(); onEngineStatus("idle", "Tayangan dihentikan."); };
     document.getElementById("fo-retry").onclick = () => { if (lastSource) play(lastSource.mode, lastSource.arg); };
     document.getElementById("fo-other").onclick = () => { document.getElementById("adv").open = true; document.getElementById("hls-preset").focus(); };
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeCamera(); });
@@ -999,7 +1004,7 @@
     tickClock();
 
     const nCity = cams.filter(c => c.kind === "city").length;
-    addEvent("info", `SENTINEL online · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(bts.length)} BTS representatif`);
+    addEvent("info", `SENTINEL aktif · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(bts.length)} BTS representatif`);
 
     setInterval(tickClock, 1000);
     window.addEventListener("resize", () => { drawSpark(); renderDensity(); });
