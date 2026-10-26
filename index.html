@@ -133,36 +133,52 @@
         </div>
         <video id="cam-video" playsinline muted></video>
         <canvas id="cam-canvas" width="960" height="540"></canvas>
-        <div class="feed-note" id="cam-note">Generic object detection · no biometric identification</div>
+        <div class="feed-note" id="cam-note">Deteksi objek umum · tanpa identifikasi biometrik</div>
+
+        <!-- what the feed is doing right now: connecting / offline / paused -->
+        <div class="feed-overlay" id="feed-overlay" hidden>
+          <div class="fo-spin" id="fo-spin"></div>
+          <div class="fo-icon" id="fo-icon"></div>
+          <div class="fo-title" id="fo-title">Menghubungkan ke kamera…</div>
+          <div class="fo-sub" id="fo-sub"></div>
+          <div class="fo-actions">
+            <button type="button" class="fo-btn" id="fo-retry" hidden>Coba lagi</button>
+            <button type="button" class="fo-btn ghost" id="fo-other" hidden>Pilih kamera live lain</button>
+          </div>
+        </div>
       </div>
 
       <div class="modal-side">
         <div class="mhead">Analysis <span class="x" id="cam-close">✕</span></div>
 
-        <div class="src-btns">
-          <div class="src-btn active" id="btn-hls">Live HLS</div>
-          <div class="src-btn" id="btn-sim">Simulated</div>
-          <div class="src-btn" id="btn-webcam">Webcam</div>
-          <div class="src-btn" id="btn-file">Video File</div>
-        </div>
-        <div class="hls-row">
-          <select id="hls-preset" title="Verified live presets"></select>
-          <input id="hls-url" placeholder="https://…/index.m3u8" spellcheck="false" />
-          <div class="src-btn go" id="hls-go">Connect</div>
-        </div>
-        <input type="file" id="file-input" accept="video/*" style="display:none" />
-        <div class="src-btn stop" id="btn-stop">Stop engine</div>
-
         <div class="model-status" id="model-status"><span class="led"></span><span id="model-text">AI engine idle</span></div>
 
         <div class="mmetrics">
-          <div class="mmetric people"><div class="v" id="m-people">0</div><div class="k">People</div></div>
-          <div class="mmetric"><div class="v" id="m-vehicles">0</div><div class="k">Vehicles</div></div>
-          <div class="mmetric"><div class="v" id="m-fps">0</div><div class="k">FPS</div></div>
+          <div class="mmetric people"><div class="v" id="m-people">—</div><div class="k">People</div></div>
+          <div class="mmetric"><div class="v" id="m-vehicles">—</div><div class="k">Vehicles</div></div>
+          <div class="mmetric"><div class="v" id="m-fps">—</div><div class="k">FPS</div></div>
         </div>
 
         <div class="det-list-head">Live Detections</div>
         <div class="det-list" id="det-list"></div>
+
+        <!-- optional: other video sources; the clicked camera plays without touching this -->
+        <details class="adv" id="adv">
+          <summary>Sumber lain (lanjutan)</summary>
+          <div class="src-btns">
+            <div class="src-btn active" id="btn-hls">Kamera ini</div>
+            <div class="src-btn" id="btn-sim">Simulasi</div>
+            <div class="src-btn" id="btn-webcam">Webcam</div>
+            <div class="src-btn" id="btn-file">File video</div>
+          </div>
+          <div class="hls-row">
+            <select id="hls-preset" title="Kamera live yang sudah diverifikasi"></select>
+            <input id="hls-url" placeholder="https://…/index.m3u8" spellcheck="false" />
+            <div class="src-btn go" id="hls-go">Connect</div>
+          </div>
+          <div class="src-btn stop" id="btn-stop">Hentikan feed</div>
+        </details>
+        <input type="file" id="file-input" accept="video/*" style="display:none" />
       </div>
     </div>
   </div>

@@ -91,6 +91,7 @@
       m.on("popupopen", () => {
         const btn = document.querySelector(".popup-btn[data-i='" + cam._i + "']");
         if (btn) btn.onclick = () => openCamera(cam);
+        ensureEngine().preloadModel();   // head start on the AI model before the feed opens
       });
       markers[cam._i] = m;
     });
@@ -303,7 +304,9 @@
   function tickClock() { document.getElementById("clock").textContent = new Date().toTimeString().slice(0, 8); }
 
   /* ---------------- CAMERA MODAL + AI ENGINE ---------------- */
-  let engine = null, currentCam = null;
+  // openedCam: the camera the user clicked. currentCam: whatever is playing now
+  // (another camera picked from "Sumber lain", or null for a custom URL).
+  let engine = null, openedCam = null, currentCam = null, lastSource = null;
   function ensureEngine() {
     if (engine) return engine;
     engine = new VisionEngine(document.getElementById("cam-canvas"), document.getElementById("cam-video"),
@@ -312,30 +315,93 @@
   }
   function initPresets() {
     const sel = document.getElementById("hls-preset");
-    sel.innerHTML = `<option value="">— featured live cameras —</option>`
+    sel.innerHTML = `<option value="">— kamera live lain —</option>`
       + featured.map(c => `<option value="${esc(c.hls)}">${esc(c.city)} · ${esc(c.name)}</option>`).join("");
-    sel.onchange = () => { if (!sel.value) return; document.getElementById("hls-url").value = sel.value; setSrcActive("btn-hls"); ensureEngine().start("hls", sel.value); };
+    sel.onchange = () => { if (!sel.value) return; document.getElementById("hls-url").value = sel.value; play("hls", sel.value); };
   }
+
+  const camNote = cam => (cam.kind === "city"
+    ? `Kamera lalu lintas kota (${cam.opName.split(" · ")[0]})`
+    : "Kamera lalu lintas jalan tol (BPJT)") + " · deteksi objek umum, tanpa identifikasi biometrik";
+
+  function setHeader(cam) {
+    document.getElementById("cam-title").textContent = cam ? (cam.name || "CCTV") : "Stream HLS pilihan";
+    document.getElementById("cam-id").textContent = cam ? `${cam.city} · ${cam.road} · ${cam.opName}` : "";
+  }
+
+  // Clicking a camera plays it straight away; "Sumber lain" only changes the source.
   function openCamera(cam) {
-    currentCam = cam;
-    document.getElementById("cam-title").textContent = cam.name || "CCTV";
-    document.getElementById("cam-id").textContent = `${cam.city} · ${cam.road} · ${cam.opName}`;
-    document.getElementById("cam-note").textContent = (cam.kind === "city"
-      ? `Public city traffic camera (${cam.opName.split(" · ")[0]})`
-      : "Public toll-road traffic camera (BPJT)") + " · generic object detection, no biometric identification";
+    openedCam = cam;
     document.getElementById("hls-url").value = cam.hls || "";
     document.getElementById("hls-preset").value = featured.some(f => f.hls === cam.hls) ? cam.hls : "";
+    document.getElementById("adv").open = false;
     document.getElementById("cam-modal").classList.add("open");
-    if (cam.hls) { setSrcActive("btn-hls"); ensureEngine().start("hls", cam.hls); }
-    else { setSrcActive("btn-sim"); ensureEngine().start("sim"); }
+    if (cam.hls) play("hls", cam.hls);
+    else { currentCam = cam; setHeader(cam); ensureEngine().stop(); onEngineStatus("offline", "Kamera ini tidak menyediakan stream publik."); }
     addEvent("info", `Opened AI feed · ${cam.name} (${cam.city})`);
   }
+
+  function play(mode, arg) {
+    lastSource = { mode, arg };
+    // "Kamera ini" lights up only while the clicked camera itself is playing
+    setSrcActive(mode === "hls"
+      ? (openedCam && arg === openedCam.hls ? "btn-hls" : null)
+      : { sim: "btn-sim", webcam: "btn-webcam", file: "btn-file" }[mode]);
+    const note = document.getElementById("cam-note");
+    if (mode === "hls") {
+      currentCam = cams.find(c => c.hls === arg) || null;
+      setHeader(currentCam);
+      note.textContent = currentCam ? camNote(currentCam) : "Stream HLS pilihan · deteksi objek umum, tanpa identifikasi biometrik";
+    } else {
+      currentCam = openedCam;
+      setHeader(openedCam);
+      note.textContent = {
+        sim: "SIMULASI — adegan buatan, bukan rekaman kamera ini",
+        webcam: "Webcam kamu · deteksi objek umum, tanpa identifikasi biometrik",
+        file: "File video lokal · deteksi objek umum, tanpa identifikasi biometrik"
+      }[mode];
+    }
+    document.querySelector("#cam-modal .feed-top .rec").lastChild.textContent = mode === "sim" ? " SIM" : " REC";
+    if (mode !== "sim") onEngineStatus("connecting", mode === "webcam" ? "Meminta akses webcam…" : "Menghubungkan…");
+    ensureEngine().start(mode, arg);
+  }
+
   function closeCamera() { if (engine) engine.stop(); document.getElementById("cam-modal").classList.remove("open"); }
   function setSrcActive(id) { ["btn-hls", "btn-sim", "btn-webcam", "btn-file"].forEach(b => document.getElementById(b).classList.toggle("active", b === id)); }
+
+  // What the video area shows for each engine state; "ready" means live, so no overlay.
+  const OVERLAY = {
+    loading:    { spin: true, title: "Memuat model AI…", sub: "Hanya di awal, sekitar 10–20 detik." },
+    connecting: { spin: true, title: "Menghubungkan ke kamera…" },
+    offline:    { icon: "⚠", title: "Kamera sedang offline", retry: "Coba lagi", other: true },
+    paused:     { icon: "❚❚", title: "Feed dijeda", retry: "Lanjutkan" },
+    idle:       { icon: "■", title: "Feed dihentikan", retry: "Putar lagi" }
+  };
+
   function onEngineStatus(stt, text) {
-    const el = document.getElementById("model-status");
-    el.className = "model-status " + (stt === "ready" ? "ready" : stt === "loading" ? "loading" : stt === "err" ? "err" : "");
+    const st = document.getElementById("model-status");
+    st.className = "model-status " + ({ ready: "ready", loading: "loading", connecting: "loading", offline: "err" }[stt] || "");
     document.getElementById("model-text").textContent = text;
+    document.querySelector("#cam-modal .feed-top .rec").hidden = stt !== "ready";
+
+    const o = OVERLAY[stt];
+    document.getElementById("feed-overlay").hidden = !o;
+    if (!o) return;
+    document.getElementById("fo-spin").hidden = !o.spin;
+    document.getElementById("fo-icon").textContent = o.icon || "";
+    document.getElementById("fo-title").textContent = o.title;
+    document.getElementById("fo-sub").textContent = o.sub || (o.spin ? "" : text);
+    const retry = document.getElementById("fo-retry");
+    retry.hidden = !o.retry;
+    retry.textContent = o.retry || "";
+    document.getElementById("fo-other").hidden = !(o.other && featured.length);
+    resetMetrics();
+    if (stt === "offline" && currentCam) addEvent("warn", `Feed offline · ${currentCam.name} (${currentCam.city})`);
+  }
+
+  function resetMetrics() {
+    ["m-people", "m-vehicles", "m-fps"].forEach(id => { document.getElementById(id).textContent = "—"; });
+    document.getElementById("det-list").innerHTML = "";
   }
   function onEngineStats(s) {
     document.getElementById("m-people").textContent = s.people;
@@ -349,14 +415,16 @@
   function initModal() {
     document.getElementById("cam-close").onclick = closeCamera;
     document.getElementById("cam-modal").addEventListener("click", e => { if (e.target.id === "cam-modal") closeCamera(); });
-    document.getElementById("btn-hls").onclick = () => { const url = (document.getElementById("hls-url").value || "").trim() || (currentCam && currentCam.hls); if (url) { setSrcActive("btn-hls"); ensureEngine().start("hls", url); } };
-    document.getElementById("hls-go").onclick = () => { const url = (document.getElementById("hls-url").value || "").trim(); if (url) { setSrcActive("btn-hls"); ensureEngine().start("hls", url); } };
+    document.getElementById("btn-hls").onclick = () => { if (openedCam && openedCam.hls) play("hls", openedCam.hls); };
+    document.getElementById("hls-go").onclick = () => { const url = (document.getElementById("hls-url").value || "").trim(); if (url) play("hls", url); };
     document.getElementById("hls-url").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("hls-go").click(); });
-    document.getElementById("btn-sim").onclick = () => { setSrcActive("btn-sim"); ensureEngine().start("sim"); };
-    document.getElementById("btn-webcam").onclick = () => { setSrcActive("btn-webcam"); ensureEngine().start("webcam"); };
+    document.getElementById("btn-sim").onclick = () => play("sim");
+    document.getElementById("btn-webcam").onclick = () => play("webcam");
     document.getElementById("btn-file").onclick = () => document.getElementById("file-input").click();
-    document.getElementById("file-input").onchange = e => { const f = e.target.files[0]; if (f) { setSrcActive("btn-file"); ensureEngine().start("file", f); } };
-    document.getElementById("btn-stop").onclick = () => { if (engine) engine.stop(); onEngineStatus("idle", "AI engine stopped"); };
+    document.getElementById("file-input").onchange = e => { const f = e.target.files[0]; if (f) play("file", f); };
+    document.getElementById("btn-stop").onclick = () => { if (engine) engine.stop(); onEngineStatus("idle", "Feed dihentikan."); };
+    document.getElementById("fo-retry").onclick = () => { if (lastSource) play(lastSource.mode, lastSource.arg); };
+    document.getElementById("fo-other").onclick = () => { document.getElementById("adv").open = true; document.getElementById("hls-preset").focus(); };
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeCamera(); });
   }
 

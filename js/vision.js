@@ -14,6 +14,9 @@
   // COCO-SSD routinely tags large boxy vehicles (trucks/containers/buses) as "train"
   // from an overhead toll angle; fold that back into "truck" for traffic counting.
   const RELABEL = { train: "truck" };
+  // Live feeds pause after this long so an idle tab doesn't keep pulling a camera
+  // server's bandwidth (several city portals cap viewing time too); one click resumes.
+  const WATCH_LIMIT_MS = 5 * 60 * 1000;
 
   const COLORS = {
     person: "#38bdf8",
@@ -47,56 +50,70 @@
       this._sim = null;
       this._alertCooldown = 0;
       this._hlsTimeout = null;
-      this.detectDisabled = false;   // set if the source is CORS-tainted (can play, can't read pixels)
+      this._watchTimer = null;
+      this._gen = 0;                 // bumped by every start()/stop(); stale async work checks it
+      this.detectDisabled = false;   // no AI on this source: model failed, or CORS-tainted pixels
     }
+
+    // Memoised so a background preload and an opening feed share one download.
+    _loadModel() {
+      if (!this._modelPromise) {
+        if (typeof cocoSsd === "undefined") return Promise.reject(new Error("cocoSsd missing"));
+        // mobilenet_v2 base: noticeably better recall on small/distant traffic than the lite base.
+        this._modelPromise = cocoSsd.load({ base: "mobilenet_v2" })
+          .then(m => (this.model = m))
+          .catch(e => { this._modelPromise = null; throw e; });
+      }
+      return this._modelPromise;
+    }
+
+    // Start fetching the model early (e.g. when a camera popup opens), silently.
+    preloadModel() { this._loadModel().catch(() => {}); }
 
     async _ensureModel() {
       if (this.model) return this.model;
-      if (typeof cocoSsd === "undefined") {
-        this.onStatus("err", "Model lib not loaded (offline?)");
-        throw new Error("cocoSsd missing");
-      }
-      this.onStatus("loading", "Loading COCO-SSD model…");
-      // mobilenet_v2 base: noticeably better recall on small/distant traffic than the lite base.
-      this.model = await cocoSsd.load({ base: "mobilenet_v2" });
-      this.onStatus("ready", "AI VISION ENGINE · ONLINE");
-      return this.model;
+      this.onStatus("loading", "Memuat model AI (COCO-SSD)…");
+      return this._loadModel();
     }
 
+    // States reported through onStatus(state, text):
+    //   loading → connecting → ready, or offline / paused / idle.
+    // A source that fails is reported as offline; the engine never swaps in the
+    // simulated scene on its own — that only plays when it is chosen explicitly.
     async start(mode, arg) {
       this.stop();
+      const gen = ++this._gen;
       this.mode = mode;
       this.running = true;
       this.detectDisabled = false;
 
       if (mode === "sim") {
-        this.onStatus("ready", "SIMULATED FEED · analytics demo");
+        this.onStatus("ready", "SIMULASI · adegan buatan, bukan rekaman kamera");
         this._startSim();
         return;
       }
 
-      try {
-        await this._ensureModel();
-      } catch (e) {
-        this._startSim();
-        return;
-      }
+      // Without the model the video can still play: show it, minus the AI.
+      try { await this._ensureModel(); } catch (e) { this.detectDisabled = true; }
+      if (gen !== this._gen) return;   // closed, or another camera picked, while the model loaded
 
       if (mode === "hls") {
-        const ok = await this._attachHls(arg);
-        if (!ok) return;           // _attachHls already fell back to sim
+        if (!(await this._attachHls(arg, gen))) return;
       } else if (mode === "webcam") {
         try {
-          this.stream = await navigator.mediaDevices.getUserMedia({
+          const stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 1280, height: 720, facingMode: "environment" },
             audio: false
           });
-          this.video.srcObject = this.stream;
+          if (gen !== this._gen) { stream.getTracks().forEach(t => t.stop()); return; }
+          this.stream = stream;
+          this.video.srcObject = stream;
           await this.video.play();
-          this.onStatus("ready", "LIVE CAMERA · AI detection active");
+          this.onStatus("ready", this._liveText("WEBCAM"));
         } catch (e) {
-          this.onStatus("err", "Camera blocked — using SIM feed");
-          this._startSim();
+          if (gen !== this._gen) return;
+          this._blank();
+          this.onStatus("offline", "Browser tidak mengizinkan akses webcam.");
           return;
         }
       } else if (mode === "file") {
@@ -106,15 +123,25 @@
         this.video.loop = true;
         this.video.muted = true;
         await this.video.play().catch(() => {});
-        this.onStatus("ready", "VIDEO FEED · AI detection active");
+        if (gen !== this._gen) return;
+        this.onStatus("ready", this._liveText("FILE VIDEO"));
       }
 
       this._detectLoop();
     }
 
+    _liveText(kind) {
+      return this.detectDisabled ? `${kind} · AI tidak tersedia (model gagal dimuat)` : `${kind} · deteksi AI aktif`;
+    }
+
+    _blank() {
+      this.ctx.fillStyle = "#05080a";
+      this.ctx.fillRect(0, 0, this.W, this.H);
+    }
+
     /* Attach a live HLS stream via hls.js (MSE) or native playback (Safari).
-       Returns true once playing, false if it failed and fell back to sim. */
-    _attachHls(url) {
+       Resolves true once playing, false if the camera could not be reached. */
+    _attachHls(url, gen) {
       return new Promise(resolve => {
         const v = this.video;
         v.srcObject = null;
@@ -122,19 +149,25 @@
         v.muted = true;
         v.loop = false;
         v.playsInline = true;
+        this.onStatus("connecting", "Menghubungkan ke kamera…");
 
         let settled = false;
         const clear = () => { if (this._hlsTimeout) { clearTimeout(this._hlsTimeout); this._hlsTimeout = null; } };
         const ready = async () => {
-          if (settled) return; settled = true; clear();
+          if (settled || gen !== this._gen) return;
+          settled = true; clear();
           try { await v.play(); } catch (e) {}
-          this.onStatus("ready", "LIVE CCTV · AI detection active");
+          if (gen !== this._gen) return;
+          this.onStatus("ready", this._liveText("LIVE CCTV"));
+          this._watchTimer = setTimeout(() => this._courtesyPause(gen), WATCH_LIMIT_MS);
           resolve(true);
         };
-        const fail = (msg) => {
-          if (settled) return; settled = true; clear();
-          this.onStatus("err", msg + " — using SIM feed");
-          this._startSim();
+        const fail = (why) => {
+          if (settled || gen !== this._gen) return;
+          settled = true; clear();
+          if (this.hls) { try { this.hls.destroy(); } catch (e) {} this.hls = null; }
+          this._blank();
+          this.onStatus("offline", why);
           resolve(false);
         };
 
@@ -148,25 +181,34 @@
             if (!data.fatal) return;
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch (e) {} }
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR && settled) { try { hls.startLoad(); return; } catch (e) {} }
-            fail("HLS " + (data.details || "error"));
+            fail(`Server kamera tidak merespons atau kameranya sedang mati (${data.details || "error"}).`);
           });
         } else if (v.canPlayType("application/vnd.apple.mpegurl")) {
           v.src = url;
           v.addEventListener("loadedmetadata", ready, { once: true });
-          v.addEventListener("error", () => fail("HLS load failed"), { once: true });
+          v.addEventListener("error", () => fail("Stream kamera tidak bisa dimuat."), { once: true });
         } else {
-          fail("HLS unsupported in this browser");
+          fail("Browser ini tidak mendukung video HLS.");
           return;
         }
         // generous: some city cameras (720p60) take ~10 s to deliver their first segment
-        this._hlsTimeout = setTimeout(() => fail("HLS timeout / unreachable"), 25000);
+        this._hlsTimeout = setTimeout(() => fail("Tidak ada video dari kamera dalam 25 detik."), 25000);
       });
     }
 
+    _courtesyPause(gen) {
+      if (gen !== this._gen || this.mode !== "hls" || !this.running) return;
+      this.stop();
+      this._blank();
+      this.onStatus("paused", `Dijeda otomatis setelah ${WATCH_LIMIT_MS / 60000} menit agar tidak terus membebani server kamera.`);
+    }
+
     stop() {
+      this._gen++;
       this.running = false;
       if (this._raf) cancelAnimationFrame(this._raf);
       if (this._hlsTimeout) { clearTimeout(this._hlsTimeout); this._hlsTimeout = null; }
+      if (this._watchTimer) { clearTimeout(this._watchTimer); this._watchTimer = null; }
       if (this._sim) { clearInterval(this._sim.timer); this._sim = null; }
       if (this.hls) { try { this.hls.destroy(); } catch (e) {} this.hls = null; }
       if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
@@ -181,12 +223,14 @@
 
     async _detectLoop() {
       if (!this.running || this.mode === "sim") return;
+      const gen = this._gen;
       const v = this.video;
       if (v.readyState >= 2 && v.videoWidth) {
         let preds = [];
         if (!this.detectDisabled) {
           try {
             preds = await this.model.detect(v, 30);
+            if (gen !== this._gen) return;   // stopped or switched while detecting
           } catch (e) {
             // A cross-origin source with no CORS headers taints the canvas:
             // keep showing the stream, but stop trying to read its pixels.
