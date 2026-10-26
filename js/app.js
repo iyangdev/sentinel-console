@@ -336,16 +336,25 @@
     return groups;
   }
 
-  // Every 4 min: sample two cameras per server (curated ones first, then ones the
-  // registry calls active). If neither plays, the server's verdict covers its
-  // cameras until they're checked one by one.
+  // resolves once every queued per-camera check has finished
+  const queueDrained = () => new Promise(res => {
+    const t = setInterval(() => { if (!queue.length && !workers) { clearInterval(t); res(); } }, 300);
+  });
+
+  // Every 4 min: sample up to three cameras per server, spread over its list (the
+  // first is a curated or registry-active one). If none plays, the server's verdict
+  // covers its cameras until they're checked one by one. If some play and some
+  // don't, a small server gets every camera checked: one working patch must not
+  // vouch for dead cameras next to it.
   async function sweepServers() {
-    const groups = hostCameras(), first = !Object.keys(hostCheck).length;
+    const groups = hostCameras(), first = !Object.keys(hostCheck).length, mixed = [];
     await Promise.all(Object.entries(groups).map(async ([host, list]) => {
-      const sample = list.slice()
-        .sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999) || (b.active ? 1 : 0) - (a.active ? 1 : 0))
-        .slice(0, 2);
+      const order = list.slice()
+        .sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999) || (b.active ? 1 : 0) - (a.active ? 1 : 0));
+      const sample = [...new Set([order[0], order[Math.floor((order.length - 1) / 2)], order[order.length - 1]])];
       const res = await Promise.all(sample.map(c => safeCheck(c.hls)));
+      const oks = res.filter(r => r.st === "ok").length;
+      if (oks && oks < res.length && list.length <= 60) mixed.push(...list);
       const now = Date.now();
       sample.forEach((c, k) => { camCheck[c._i] = { st: res[k].st, why: res[k].why, at: now, src: "cam" }; });
       const best = res.find(r => r.st === "ok") || res.find(r => r.st === "nostream") || res[0];
@@ -357,6 +366,8 @@
         down: `Server ${host} tidak merespons`
       }[best.st] + ` · ${fmt(list.length)} kamera`);
     }));
+    mixed.forEach(c => queueCheck(c));
+    if (first && mixed.length) await queueDrained();   // so the first summary counts them
     restyleAll();
     updateCounts();
     renderPresets();
@@ -441,7 +452,8 @@
     const portals = (CITY_SOURCE.portals || [])
       .map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.city)} — ${esc(p.name)}</a> <span style="opacity:.7">(${esc(p.reason)})</span>`).join("<br>");
     el.innerHTML = `CCTV tol: <a href="${esc(SOURCE.url || "#")}" target="_blank" rel="noopener">BPJT · Kementerian PU</a> — `
-      + `${SOURCE.count || 0} cameras (snapshot ${esc(SOURCE.snapshot || "—")}).<br>`
+      + `${SOURCE.count || 0} cameras (snapshot ${esc(SOURCE.snapshot || "—")}`
+      + (SOURCE.fixed ? `; ${SOURCE.fixed} stream URLs corrected from operator sites` : "") + `).<br>`
       + (citySrc ? `CCTV kota: ${citySrc}.<br>` : "")
       + `BTS: ${bts.length} <em>representative</em> cell-sites — illustrative infrastructure, not real coordinates and not linked to any device.<br>`
       + `Generic traffic analytics only — no face recognition, no plate reading, no identity tracking.`

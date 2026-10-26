@@ -4,7 +4,9 @@
 BPJT (Badan Pengatur Jalan Tol, Kementerian PU) publishes every toll-road
 camera — operator, road, KM marker, coordinates and HLS stream — on
 https://bpjt.pu.go.id/cctv/ as an embedded `allStreams` JSON object.
-Stream IDs rotate over time, so re-run this when cameras stop resolving.
+Stream IDs rotate over time and the registry can lag behind the operators:
+re-run this when cameras stop resolving, and add to STREAM_FIXES when an
+operator has moved a stream the registry still lists.
 
 Usage:
     python3 tools/update_cctv.py                      # fetch live registry
@@ -101,6 +103,33 @@ FEATURED_URLS = [
     "https://pub.hk-opt.com/LiveApp/streams/lmmPRLvM75XM1670838964818.m3u8",        # Sumatra · Pekanbaru–Dumai
 ]
 
+# Streams an operator has moved while the registry still lists the old URL.
+# BSD (Tol Pondok Aren–Serpong) recreated its Restreamer streams: all 23 BSD URLs
+# in the registry (snapshot 2026-05-11) return 404. Each fix maps a registry URL
+# to the stream BSD's own player page (https://stream.bsdtol.com/) serves under
+# the same KM name; every new stream was checked live, down to the segment, from
+# a browser on 2026-10-26. lat/lng are BSD's own, from the map on its Live CCTV
+# page (https://bsdtol.com/live-cctv), where that differs from the registry by
+# more than 10 m. Keyed by the registry URL, so a fix stops applying as soon as
+# BPJT publishes a new URL for that camera. The other 11 BSD cameras in the
+# registry no longer appear on BSD's player page, so they keep their dead URLs.
+BSD = "https://stream.bsdtol.com/memfs/"
+STREAM_FIXES = {
+    BSD + "f6541ad9-15d2-45a5-88c6-ec625dfb56c6.m3u8": {"hls": BSD + "09610e5b-ed8a-4065-86c2-fd09916c4fcc.m3u8", "lat": -6.289263, "lng": 106.726073},  # Exit Pondok Aren Barat 1 ("PAB 1"), moved 86 m
+    BSD + "3f2b1849-6791-4643-9298-6bb50b5e9bf2.m3u8": {"hls": BSD + "4e895ec1-073c-48f0-b274-75f535903358.m3u8"},  # km 05+500
+    BSD + "7a2d5b4a-a408-4de6-888b-6f83848fa9bf.m3u8": {"hls": BSD + "e1416c04-477f-48a7-bfb3-430e6cf8331e.m3u8", "lat": -6.289644, "lng": 106.726431},  # KM 06+200, moved 19 m
+    BSD + "f88035ff-8d15-48f6-b338-742c44f55245.m3u8": {"hls": BSD + "908c8b07-39b7-4420-ba29-1c62c0454819.m3u8", "lat": -6.290563, "lng": 106.723117},  # km 06+600, moved 366 m
+    BSD + "74220d9a-a9da-4c18-b628-4b7c41727f1e.m3u8": {"hls": BSD + "37e72725-96a3-4f4a-b00b-22705e48c333.m3u8"},  # KM 07+200
+    BSD + "4f166be4-4e6c-46de-9fd0-0431503493e3.m3u8": {"hls": BSD + "293cdf1a-bc5f-4ce3-aca1-880385dcb5ec.m3u8", "lat": -6.294335, "lng": 106.715111},  # KM 07+600, moved 73 m
+    BSD + "73cc6e50-e75e-46d3-b51d-654eb992fa08.m3u8": {"hls": BSD + "1ebecbca-354e-4d1b-b8aa-9d23b437fbc5.m3u8"},  # km 08+700
+    BSD + "31a155a0-dbfe-4c69-a1ee-1c4e66eee56b.m3u8": {"hls": BSD + "fae1d8ab-1323-4293-a46e-ab224d6775c3.m3u8"},  # KM 09+200
+    BSD + "45622a12-c356-455a-85ef-34b3e6080564.m3u8": {"hls": BSD + "5dc62447-d329-433d-8e00-d900a0e32eb4.m3u8"},  # km 09+700
+    # BSD's map still links the old 10+000 stream; its player page has the new one under "KM 10+000"
+    BSD + "84bff122-de3c-499f-8b0b-5e549b856b89.m3u8": {"hls": BSD + "2ab5f200-eea8-4778-8458-d89011612e5d.m3u8"},  # KM 10+000
+    BSD + "7f0767d4-8500-4e51-880a-99b48a20bfb8.m3u8": {"hls": BSD + "f51cf0cc-94f7-492a-8562-9f7ded928fe9.m3u8"},  # KM 11+000
+    BSD + "885d3159-dc20-41c2-8dcf-564592079f02.m3u8": {"hls": BSD + "bbeac803-c29f-402f-97bb-25f007e384f1.m3u8"},  # KM 12+600
+}
+
 OUT = pathlib.Path(__file__).resolve().parent.parent / "js" / "cctv-data.js"
 
 
@@ -129,7 +158,7 @@ def to_float(v):
 
 def build(records, bbox):
     south, west, north, east = bbox
-    by_url, snapshot = {}, ""
+    by_url, snapshot, fixed = {}, "", set()
     for r in records:
         # `protocol` describes the embed player, not `streamhls`: cameras tagged
         # "embedded"/"http" still carry a working HLS URL, so test the URL itself.
@@ -137,6 +166,11 @@ def build(records, bbox):
         if not hls.startswith(("https://", "http://")) or ".m3u8" not in hls:
             continue
         lat, lng = to_float(r.get("lat")), to_float(r.get("lon"))
+        fix = STREAM_FIXES.get(hls)
+        if fix:
+            hls = fix["hls"]
+            lat, lng = fix.get("lat", lat), fix.get("lng", lng)
+            fixed.add(hls)
         if lat is None or lng is None or not (south <= lat <= north and west <= lng <= east):
             continue
         snapshot = max(snapshot, (r.get("tgl_tarik") or "")[:10])
@@ -166,10 +200,10 @@ def build(records, bbox):
     for c in cams:
         if c["hls"] in rank:
             c["featured"] = rank[c["hls"]]
-    return cams, snapshot
+    return cams, snapshot, len(fixed & {c["hls"] for c in cams})
 
 
-def write(cams, snapshot, bbox):
+def write(cams, snapshot, bbox, fixed):
     meta = {
         "name": "BPJT — Badan Pengatur Jalan Tol, Kementerian PU",
         "url": REGISTRY_URL,
@@ -177,6 +211,7 @@ def write(cams, snapshot, bbox):
         "snapshot": snapshot,
         "bbox": bbox,
         "count": len(cams),
+        "fixed": fixed,   # stream URLs corrected from operator sites (STREAM_FIXES)
     }
     rows = ",\n".join("  " + json.dumps(c, ensure_ascii=False, separators=(",", ":")) for c in cams)
     OUT.write_text(
@@ -186,6 +221,7 @@ def write(cams, snapshot, bbox):
         f" *           {meta['url']}\n"
         f" * Pulled:   {meta['pulled']} (registry snapshot {snapshot or 'unknown'})\n"
         f" * Coverage: {len(cams)} public toll-road cameras with HLS inside bbox {list(bbox)}\n"
+        f" * Fixes:    {fixed} stream URLs corrected from operator sites (see STREAM_FIXES)\n"
         " *\n"
         " * Public traffic cameras published by the toll regulator for public viewing.\n"
         " * Respect each operator's terms; don't poll them aggressively.\n"
@@ -207,14 +243,14 @@ def main():
         sys.exit("error: --bbox needs 4 numbers: south,west,north,east")
     page = pathlib.Path(args.from_file).read_text(encoding="utf-8", errors="replace") if args.from_file else fetch_registry()
 
-    cams, snapshot = build(extract_streams(page), bbox)
-    write(cams, snapshot, bbox)
+    cams, snapshot, fixed = build(extract_streams(page), bbox)
+    write(cams, snapshot, bbox, fixed)
 
     import collections
     cities = collections.Counter(c["city"] for c in cams)
     print(f"wrote {OUT.relative_to(OUT.parent.parent)}: {len(cams)} cameras "
-          f"({sum(c['active'] for c in cams)} registry-active, {sum('featured' in c for c in cams)} featured) "
-          f"across {len(cities)} places")
+          f"({sum(c['active'] for c in cams)} registry-active, {sum('featured' in c for c in cams)} featured, "
+          f"{fixed} stream URLs fixed) across {len(cities)} places")
     for place, n in cities.most_common():
         print(f"  {n:4d}  {place}")
 
