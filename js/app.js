@@ -373,7 +373,8 @@
   const OVERLAY = {
     loading:    { spin: true, title: "Memuat model AI…", sub: "Hanya di awal, sekitar 10–20 detik." },
     connecting: { spin: true, title: "Menghubungkan ke kamera…" },
-    offline:    { icon: "⚠", title: "Kamera sedang offline", retry: "Coba lagi", other: true },
+    offline:    { icon: "⚠", title: "Kamera sedang offline", retry: "Coba lagi", other: true,
+                  sub: "Server kamera ini sedang tidak merespons. Banyak kamera berbagi server yang sama, jadi satu kota bisa offline bersamaan. Coba kamera berlabel LIVE." },
     paused:     { icon: "❚❚", title: "Feed dijeda", retry: "Lanjutkan" },
     idle:       { icon: "■", title: "Feed dihentikan", retry: "Putar lagi" }
   };
