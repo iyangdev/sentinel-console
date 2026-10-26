@@ -168,15 +168,19 @@
   };
   // Jasa Marga shows its cameras in its own Travoy app ("CCTV Real Time" on the official page)
   const JM_HOST = "jmlive.jasamarga.com", TRAVOY_URL = "https://www.jasamarga.com/inovasi-teknologi/travoy";
-  function popupHtml(cam) {
-    const kind = cam.kind === "city" ? "CCTV KOTA" : "CCTV TOL";
-    const s = camState(cam);
-    const [label, col] = STATE_LABEL[s.st];
+  // a camera's status in words: label, its colour, and the reason or the check time
+  function statusInfo(cam) {
+    const s = camState(cam), [label, col] = STATE_LABEL[s.st];
     const detail = pending.has(cam._i) ? "mengecek kamera ini…"
       : s.st === "ok" ? `dicek ${wib(s.at)} WIB`
       : s.st === "presumed" ? "kamera lain di server ini berjalan; kamera ini belum dicek"
       : s.st === "unknown" ? (cam.active ? "menunggu pengecekan" : "data sumber: nonaktif")
       : s.why + (s.src === "host" ? " (hasil cek server)" : "");
+    return { label, col, detail };
+  }
+  function popupHtml(cam) {
+    const kind = cam.kind === "city" ? "CCTV KOTA" : "CCTV TOL";
+    const { label, col, detail } = statusInfo(cam);
     const st = camStats[cam._i], an = st && st.mins.length ? camSummary(st) : null;
     return `<div class="popup-title" style="color:${KIND_COLOR[cam.kind]}">${esc(cam.name) || "CCTV"}</div>
       <div class="popup-row">${kind} · ${esc(cam.city)} · ${esc(cam.road)}</div>
@@ -332,6 +336,7 @@
     if (m) { if (cam.featured != null) m.setIcon(featuredIcon(cam)); else m.setStyle(circleStyle(cam)); }
     if (row) { row.querySelector(".stat-led").className = ledClass(cam); row.lastElementChild.outerHTML = rowTag(cam); }
     if (syncShown(cam)) scheduleList();
+    if (tab === "kamera") { const tr = document.querySelector(`#dir-body tr[data-i='${cam._i}']`); if (tr) tr.outerHTML = dirRow(cam); }
     refreshPopup(cam);
   }
   function restyleAll() {
@@ -358,6 +363,8 @@
     setText("svr-status", `Video tersedia: ${fmt(t.live)} kamera · tanpa video: ${fmt(t.none)}${hideNoVideo ? " (disembunyikan)" : ""}`
       + (t.muted ? ` · nonaktif menurut data sumber: ${fmt(t.muted)}` : ""));
     setText("hdr-live", `${fmt(t.live)} / ${fmt(cams.length)}`);
+    if (tab === "analitik") renderNetwork();
+    else if (tab === "kamera" && dirStatus) renderDir();   // a row may have left the status shown
   }
 
   function hostCameras() {
@@ -427,20 +434,39 @@
   }
 
   /* ---------------- CITY SELECTOR + LIST ---------------- */
+  // City and search are shared by the map's list and the Kamera tab, each with its own controls.
   function initCitySelect() {
     const counts = {};
     cams.forEach(c => { counts[c.city] = (counts[c.city] || 0) + 1; });
     const places = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-    const sel = document.getElementById("city-select");
-    sel.innerHTML = `<option value="">Semua wilayah — ${cams.length} CCTV</option>`
+    const opts = `<option value="">Semua wilayah — ${fmt(cams.length)} CCTV</option>`
       + places.map(p => `<option value="${esc(p)}">${esc(p)} · ${counts[p]}</option>`).join("");
-    sel.onchange = () => {
-      state.city = sel.value;
-      setText("hdr-region", state.city ? state.city.toUpperCase() : "INDONESIA");
-      renderList();
-      const inCity = cams.filter(c => !state.city || c.city === state.city), vis = inCity.filter(shown);
-      fitTo(vis.length ? vis : inCity.length ? inCity : cams);
-    };
+    ["city-select", "dir-city"].forEach(id => {
+      const sel = document.getElementById(id);
+      sel.innerHTML = opts;
+      sel.onchange = () => setCity(sel.value);
+    });
+  }
+
+  function setCity(city) {
+    state.city = city;
+    ["city-select", "dir-city"].forEach(id => { document.getElementById(id).value = city; });
+    setText("hdr-region", city ? city.toUpperCase() : "INDONESIA");
+    renderList();
+    if (tab === "kamera") renderDir();
+    if (tab === "langsung") fitCity(); else pendingFit = true;   // a hidden map can't fit anything
+  }
+  function fitCity() {
+    pendingFit = false;
+    const inCity = cams.filter(c => !state.city || c.city === state.city), vis = inCity.filter(shown);
+    fitTo(vis.length ? vis : inCity.length ? inCity : cams);
+  }
+  // from: the box being typed in, which keeps its own text
+  function setQuery(q, from) {
+    state.q = q.trim().toLowerCase();
+    ["cam-filter", "dir-q"].forEach(id => { const el = document.getElementById(id); if (el !== from) el.value = q; });
+    renderList();
+    if (tab === "kamera") renderDir();
   }
 
   function camMatches(cam) {
@@ -452,12 +478,12 @@
   const ledClass = cam => `stat-led led-${noVideo(cam) ? "down" : looksLive(cam) ? "online" : "offline"}${cam.kind === "city" ? " kind-city" : ""}`;
   // "LANGSUNG" marks the curated cameras, but only while they actually have video
   const rowTag = cam => (cam.featured != null && !noVideo(cam)) ? `<span class="badge-live">LANGSUNG</span>` : `<span class="cid">${esc(cam.city)}</span>`;
+  const camOrder = (a, b) => (a.featured ?? 999) - (b.featured ?? 999) || a.city.localeCompare(b.city) || a.road.localeCompare(b.road);
 
   function renderList() {
     const el = document.getElementById("camera-list");
     const matched = cams.filter(camMatches);
-    const list = matched.filter(shown)
-      .sort((a, b) => (a.featured ?? 999) - (b.featured ?? 999) || a.city.localeCompare(b.city) || a.road.localeCompare(b.road));
+    const list = matched.filter(shown).sort(camOrder);
     const hidden = matched.length - list.length;
     el.innerHTML = list.slice(0, 400).map(cam => `<div class="cam-item" data-i="${cam._i}">
         <span class="${ledClass(cam)}"></span>
@@ -475,9 +501,11 @@
   }
 
   function initFilter() {
-    const inp = document.getElementById("cam-filter");
-    let t;
-    inp.oninput = () => { clearTimeout(t); t = setTimeout(() => { state.q = inp.value.trim().toLowerCase(); renderList(); }, 120); };
+    ["cam-filter", "dir-q"].forEach(id => {
+      const inp = document.getElementById(id);
+      let t;
+      inp.oninput = () => { clearTimeout(t); t = setTimeout(() => setQuery(inp.value, inp), 120); };
+    });
   }
 
   function initSourceNote() {
@@ -523,10 +551,150 @@
     updateCounts();
   }
 
-  function initTabs() {
+  /* ---------------- TABS ---------------- */
+  // Langsung: the map console · Analitik: video across the network and the traffic
+  // the AI measured · Kamera: every camera in one table. The right panel stays in all
+  // three. The tab is kept in the address (#analitik, #kamera) so a link opens on it.
+  const TABS = ["langsung", "analitik", "kamera"];
+  let tab = "langsung", pendingFit = false;
+  function setTab(name) {
+    if (!TABS.includes(name)) name = "langsung";
+    tab = name;
+    document.getElementById("app").dataset.tab = name;
     document.querySelectorAll(".tab").forEach(t => {
-      t.onclick = () => { document.querySelectorAll(".tab").forEach(x => x.classList.remove("active")); t.classList.add("active"); };
+      const on = t.dataset.tab === name;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", String(on));
     });
+    history.replaceState(null, "", name === "langsung" ? location.pathname + location.search : "#" + name);
+    if (name === "langsung") { map.invalidateSize(); if (pendingFit) fitCity(); }
+    else if (name === "kamera") renderDir();
+    else { renderNetwork(); renderTraffic(); }
+  }
+  function initTabs() {
+    document.querySelectorAll(".tab").forEach(t => { t.onclick = () => setTab(t.dataset.tab); });
+    window.addEventListener("hashchange", () => setTab(location.hash.slice(1)));
+  }
+
+  // what the buttons in both tabs do with a camera
+  function act(what, cam) {
+    if (what === "map") { setTab("langsung"); focusCamera(cam); }
+    else if (what === "ai") openCamera(cam);
+    else if (what === "csv" && camStats[cam._i]) downloadCsv([camStats[cam._i]], csvName(cam));
+  }
+
+  /* ---------------- KAMERA TAB ---------------- */
+  let dirStatus = "";   // "" all · live · none · muted, the same split as the counts
+  const statusKey = cam => noVideo(cam) ? "none" : looksLive(cam) ? "live" : "muted";
+  function dirRow(cam) {
+    const s = statusInfo(cam);
+    return `<tr data-i="${cam._i}">
+      <td><span class="${ledClass(cam)}"></span></td>
+      <td><div class="nm">${esc(cam.name) || "CCTV"}</div><div class="sb">${cam.kind === "city" ? "CCTV kota" : "CCTV tol"}</div></td>
+      <td>${esc(cam.city)}</td><td>${esc(cam.road)}</td><td>${esc(cam.opName)}</td>
+      <td><div style="color:${s.col}">${s.label}</div><div class="sb">${esc(s.detail)}</div></td>
+      <td class="act"><button type="button" data-act="map">Peta</button><button type="button" data-act="ai">Analisis AI</button></td>
+    </tr>`;
+  }
+  function renderDir() {
+    const list = cams.filter(c => camMatches(c) && (!dirStatus || statusKey(c) === dirStatus)).sort(camOrder);
+    document.getElementById("dir-body").innerHTML = list.map(c => dirRow(c)).join("")
+      || `<tr><td colspan="7" class="dir-empty">Tidak ada kamera yang cocok.</td></tr>`;
+    setText("dir-count", `${fmt(list.length)} kamera`);
+  }
+
+  /* ---------------- ANALITIK TAB ---------------- */
+  // Video per operator and per region comes from the same checks as the map; the
+  // traffic cards from the analyses run since the page opened.
+  const opOf = cam => cam.opName.split(" · ")[0];
+  function groupCounts(keyOf) {
+    const g = {};
+    cams.forEach(c => {
+      const k = keyOf(c), r = g[k] || (g[k] = { k, n: 0, live: 0, none: 0, muted: 0 });
+      r.n++; r[statusKey(c)]++;
+    });
+    return Object.values(g).sort((a, b) => b.n - a.n || a.k.localeCompare(b.k));
+  }
+  // rows open the Kamera tab on that operator (as a search) or that region
+  function availTable(rows, attr, head) {
+    return `<thead><tr><th>${head}</th><th>Kamera</th><th>Bervideo</th><th>Tanpa video</th><th>Nonaktif</th><th></th></tr></thead><tbody>`
+      + rows.map(r => `<tr data-${attr}="${esc(r.k)}" title="Lihat kamera ${esc(r.k)}">
+          <td>${esc(r.k)}</td><td>${fmt(r.n)}</td><td>${fmt(r.live)}</td><td>${fmt(r.none)}</td><td>${fmt(r.muted)}</td>
+          <td><div class="avail"><i style="width:${(r.live / r.n) * 100}%"></i><b style="width:${(r.none / r.n) * 100}%"></b></div></td></tr>`).join("")
+      + `</tbody>`;
+  }
+  function renderNetwork() {
+    const hosts = Object.values(hostCheck);
+    if (!hosts.length) {
+      setText("an-checked", "memeriksa video kamera…");
+      document.getElementById("an-tiles").innerHTML = "";
+      ["an-ops", "an-cities"].forEach(id => { document.getElementById(id).innerHTML = ""; });
+      return;
+    }
+    const t = tally(), sending = hosts.filter(h => h.st === "ok").length;
+    const checked = cams.filter(c => camState(c).st === "ok").length;
+    const ops = groupCounts(opOf), worst = ops.reduce((a, r) => (r.none > a.none ? r : a), ops[0]);
+    setText("an-checked", `dicek terakhir ${wib(Math.max(...hosts.map(h => h.at)))} WIB · ${fmt(cams.length)} kamera`);
+    document.getElementById("an-tiles").innerHTML = [
+      ["live", fmt(t.live), "Bervideo", `${Math.round((t.live / cams.length) * 100)}% · ${fmt(checked)} sudah dicek satu per satu`],
+      ["none", fmt(t.none), "Tanpa video", worst.none ? `terbanyak: ${worst.k} (${fmt(worst.none)})` : ""],
+      ["muted", fmt(t.muted), "Nonaktif", "menurut data sumber, belum terbukti bervideo"],
+      ["", `${sending} / ${hosts.length}`, "Server mengirim video", `${hosts.length - sending} tanpa video atau tidak merespons`]
+    ].map(([cls, v, k, s]) => `<div class="tile ${cls}"><div class="v">${v}</div><div class="k">${k}</div><div class="s">${esc(s)}</div></div>`).join("");
+    document.getElementById("an-ops").innerHTML = availTable(ops, "op", "Operator");
+    document.getElementById("an-cities").innerHTML = availTable(groupCounts(c => c.city), "city", "Wilayah");
+  }
+
+  function renderTraffic() {
+    const el = document.getElementById("an-cams"), list = analysed();
+    document.getElementById("an-csv").hidden = !list.length;
+    if (!list.length) {
+      const picks = featured.filter(c => !noVideo(c)).slice(0, 6);
+      el.innerHTML = `<div class="an-empty">Belum ada kamera yang dianalisis di sesi ini. Kepadatan lalu lintas dicatat per menit selama analisis AI berjalan.`
+        + (picks.length ? `<div class="an-try">Coba kamera pilihan:${picks.map(c =>
+            `<button type="button" data-act="ai" data-i="${c._i}">${esc(c.name)} (${esc(c.city)})</button>`).join("")}</div>` : "")
+        + `</div>`;
+      return;
+    }
+    el.innerHTML = list.map(st => {
+      const s = camSummary(st), c = st.cam;
+      return `<div class="an-card" data-i="${c._i}">
+        <div class="an-card-head"><div class="meta"><div class="nm">${esc(c.name) || "CCTV"}</div><div class="sb">${esc(c.city)} · ${esc(c.road)}</div></div>${lvlBadge(s.avgV)}</div>
+        <div class="sb">${dur(s.ms)} dianalisis · rata-rata ${dec(s.avgV)} kendaraan di frame · puncak ${s.peakV}</div>
+        <canvas class="an-chart"></canvas>
+        <div class="an-card-act"><button type="button" data-act="map">Peta</button><button type="button" data-act="ai">Analisis AI</button><button type="button" data-act="csv">⤓ CSV</button></div>
+      </div>`;
+    }).join("");
+    el.querySelectorAll(".an-card").forEach(card => drawMinutes(card.querySelector("canvas"), camStats[card.dataset.i], false));
+  }
+
+  function initViews() {
+    // buttons sit in a row or card that carries the camera's data-i
+    const onAct = e => {
+      const btn = e.target.closest("button[data-act]"), holder = btn && btn.closest("[data-i]");
+      if (holder) { act(btn.dataset.act, cams[+holder.dataset.i]); return true; }
+      return false;
+    };
+    document.getElementById("view-kamera").addEventListener("click", onAct);
+    document.getElementById("dir-status").addEventListener("click", e => {
+      const b = e.target.closest("button[data-st]");
+      if (!b) return;
+      dirStatus = b.dataset.st;
+      document.querySelectorAll("#dir-status button").forEach(x => x.classList.toggle("on", x === b));
+      renderDir();
+    });
+    document.getElementById("view-analitik").addEventListener("click", e => {
+      if (onAct(e)) return;
+      const tr = e.target.closest("tr[data-op], tr[data-city]");
+      if (!tr) return;
+      if (tr.dataset.city != null) { setQuery(""); setCity(tr.dataset.city); }
+      else { setCity(""); setQuery(tr.dataset.op); }
+      setTab("kamera");
+    });
+    document.getElementById("an-csv").onclick = () => {
+      const list = analysed();
+      if (list.length) downloadCsv(list, `sentinel-analitik-${fileStamp()}.csv`);
+    };
   }
 
   /* ---------------- AI ANALYSIS (real detections only) ---------------- */
@@ -565,8 +733,11 @@
     if (run.cam) refreshPopup(run.cam);
   }
 
-  // everything that shows analysis results: right panel, timeline, feed window
-  function renderAnalytics() { renderPanel(); drawSpark(); renderDensity(); renderCamStats(); }
+  // everything that shows analysis results: right panel, timeline, feed window, Analitik tab
+  function renderAnalytics() {
+    renderPanel(); drawSpark(); renderDensity(); renderCamStats();
+    if (tab === "analitik") renderTraffic();
+  }
 
   function recordStats(s) {
     if (!run || run.end) return;
@@ -766,11 +937,12 @@
   }
   const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "kamera";
   const fileStamp = () => wibMinute(Date.now()).replace(/[-: ]/g, "").replace(/^(\d{8})/, "$1-");   // 20261027-0815
+  const csvName = cam => `sentinel-${slug(cam.name)}-${fileStamp()}.csv`;
 
   function initAnalytics() {
     document.getElementById("dens-csv").onclick = () => {
       const st = currentCam && camStats[currentCam._i];
-      if (st) downloadCsv([st], `sentinel-${slug(st.cam.name)}-${fileStamp()}.csv`);
+      if (st) downloadCsv([st], csvName(st.cam));
     };
     document.getElementById("csv-all").onclick = () => {
       const list = analysed();
@@ -1000,14 +1172,16 @@
     initPresets();
     initModal();
     initAnalytics();
+    initViews();
     renderAnalytics();
+    setTab(location.hash.slice(1));   // a link can open on #analitik or #kamera
     tickClock();
 
     const nCity = cams.filter(c => c.kind === "city").length;
     addEvent("info", `SENTINEL aktif · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(bts.length)} BTS representatif`);
 
     setInterval(tickClock, 1000);
-    window.addEventListener("resize", () => { drawSpark(); renderDensity(); });
+    window.addEventListener("resize", () => { drawSpark(); renderDensity(); if (tab === "analitik") renderTraffic(); });
     startChecks();
   }
 

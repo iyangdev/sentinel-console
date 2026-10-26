@@ -34,10 +34,10 @@
         </div>
       </div>
 
-      <nav class="tabs">
-        <div class="tab active" data-tab="live">Langsung</div>
-        <div class="tab" data-tab="analytics">Analitik</div>
-        <div class="tab" data-tab="cameras">Kamera</div>
+      <nav class="tabs" role="tablist" aria-label="Tampilan">
+        <button type="button" class="tab active" role="tab" aria-selected="true" data-tab="langsung">Langsung</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-tab="analitik">Analitik</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-tab="kamera">Kamera</button>
       </nav>
 
       <div class="header-right">
@@ -84,6 +84,52 @@
         <div class="hud-corner bl"></div><div class="hud-corner br"></div>
         <div class="map-badge">CITRA SATELIT ESRI · CCTV TOL + KOTA · BTS</div>
         <div class="map-coords" id="map-coords">LINTANG -6.2088 · BUJUR 106.8456 · ZOOM 12</div>
+      </section>
+
+      <!-- ANALITIK: video across the network, and the traffic the AI measured per camera -->
+      <section class="view" id="view-analitik" aria-label="Analitik">
+        <div class="view-inner">
+          <div class="v-title">Analitik <span class="v-sub" id="an-checked"></span></div>
+          <div class="tiles" id="an-tiles"></div>
+
+          <div class="v-head"><span class="dot"></span> Lalu lintas per kamera <span class="v-sub">sesi ini</span>
+            <button type="button" class="csv-btn" id="an-csv" hidden>⤓ CSV</button></div>
+          <div class="an-cards" id="an-cams"></div>
+
+          <div class="an-cols">
+            <div>
+              <div class="v-head"><span class="dot"></span> Video per operator</div>
+              <div class="tbl-wrap"><table class="an-tbl" id="an-ops"></table></div>
+            </div>
+            <div>
+              <div class="v-head"><span class="dot"></span> Video per wilayah</div>
+              <div class="tbl-wrap"><table class="an-tbl" id="an-cities"></table></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- KAMERA: every camera with its status; from here, open it on the map or in the AI -->
+      <section class="view" id="view-kamera" aria-label="Daftar kamera">
+        <div class="view-inner">
+          <div class="dir-bar">
+            <input id="dir-q" placeholder="Cari nama, ruas, atau operator…" spellcheck="false" />
+            <select id="dir-city"></select>
+            <div class="seg" id="dir-status" role="group" aria-label="Status video">
+              <button type="button" class="on" data-st="">Semua</button>
+              <button type="button" data-st="live">Bervideo</button>
+              <button type="button" data-st="none">Tanpa video</button>
+              <button type="button" data-st="muted">Nonaktif</button>
+            </div>
+            <span class="dir-count" id="dir-count"></span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="dir">
+              <thead><tr><th></th><th>Kamera</th><th>Wilayah</th><th>Ruas</th><th>Operator</th><th>Status</th><th></th></tr></thead>
+              <tbody id="dir-body"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <!-- RIGHT PANEL -->
