@@ -1,6 +1,6 @@
 /* ============================================================
    SENTINEL — console orchestration
-   National public toll-road CCTV (BPJT) + representative BTS layer
+   National public toll-road CCTV (BPJT) + cell towers from OpenStreetMap
    + in-browser AI vision engine.
    ============================================================ */
 (function () {
@@ -14,17 +14,18 @@
   const SOURCE = window.CCTV_SOURCE || {};
   const CITY_SOURCE = window.CITY_CCTV_SOURCE || {};
   const KIND_COLOR = { toll: "#37e39b", city: "#f5a524" };
-  const bts = window.BTS_SITES || [];
-  const BTS_SOURCE = window.BTS_SOURCE || {};
+  const BTS_SOURCE = window.BTS_SOURCE || {};   // the towers themselves load with the BTS layer
   const featured = cams.filter(c => c.featured != null).sort((a, b) => a.featured - b.featured);
 
   let map, imagery, labelsLayer, markerLayer, cityLayer, coverageLayer, heatLayer, btsLayer;
   const markers = {};
   const state = { city: "", q: "" };
 
-  const OP_COLOR = { Telkomsel: "#ff4d5e", Indosat: "#f5a524", "XL Axiata": "#38bdf8", Tri: "#c084fc", Smartfren: "#37e39b" };
+  const OP_COLOR = { Telkomsel: "#ff4d5e", Indosat: "#f5a524", XL: "#38bdf8", XLSmart: "#38bdf8", Tri: "#c084fc", Smartfren: "#37e39b" };
 
   const fmt = n => n.toLocaleString("id-ID");
+  // "2026-05-11" -> "11 Mei 2026"
+  const fmtDate = d => (d ? new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "—");
   // clock and log times in WIB, whatever the viewer's own time zone
   const wib = t => new Date(t).toLocaleTimeString("en-GB", { timeZone: "Asia/Jakarta", hour12: false });
   function setText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
@@ -65,7 +66,7 @@
 
     imagery = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { attribution: "Citra © Esri · CCTV © BPJT Kementerian PU · BTS: representatif", maxZoom: 18 }
+      { attribution: 'Citra © Esri · CCTV © BPJT Kementerian PU · BTS © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">kontributor OpenStreetMap</a>', maxZoom: 18 }
     ).addTo(map);
 
     labelsLayer = L.tileLayer(
@@ -200,23 +201,33 @@
     if (heatLayer.getLayers().length) return;
     cams.forEach(cam => { if (cam.active) L.circle([cam.lat, cam.lng], { radius: 900, stroke: false, fillColor: "#f5a524", fillOpacity: 0.06 }).addTo(heatLayer); });
   }
+  // Cell towers mapped in OpenStreetMap: a position and the operator(s) it names,
+  // nothing else (tools/gen_bts.py). They load the first time the layer is switched on.
+  let btsLoad = null;
   function buildBts() {
-    if (btsLayer.getLayers().length) return;
+    if (btsLoad) return btsLoad;
     const BTS = "#c084fc";   // single colour so BTS reads distinctly from CCTV green
-    bts.forEach(s => {
-      const col = OP_COLOR[s.operator] || BTS;
-      const m = L.circleMarker([s.lat, s.lng], {
-        radius: s.g === "5G" ? 4 : 3, color: BTS, weight: 1, opacity: 0.9,
-        fillColor: BTS, fillOpacity: s.g === "5G" ? 0.5 : 0.3
-      });
-      m.bindPopup(
-        `<div class="popup-title" style="color:${col}">▲ ${esc(s.operator)}</div>
-         <div class="popup-row">${esc(s.id)} · ${esc(s.city)}</div>
-         <div class="popup-row">${esc(s.band)} MHz · ${esc(s.g)} · sel ~${s.radius} m</div>
-         <div class="popup-row" style="color:var(--text-faint);margin-top:4px">Lokasi representatif · hanya lapisan infrastruktur</div>`
-      );
-      m.addTo(btsLayer);
-    });
+    btsLoad = fetch(`${BTS_SOURCE.file || "data/bts.json"}?d=${encodeURIComponent(BTS_SOURCE.pulled || "")}`)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then(d => {
+        d.towers.forEach(([lat, lng, o]) => {
+          const op = d.ops[o] || "";
+          L.circleMarker([lat, lng], { radius: 3, color: BTS, weight: 1, opacity: 0.9, fillColor: BTS, fillOpacity: 0.35 })
+            .bindPopup(() => btsPopup(lat, lng, op)).addTo(btsLayer);
+        });
+        addEvent("info", `Lapisan BTS · ${fmt(d.towers.length)} menara seluler dari OpenStreetMap`);
+      })
+      .catch(() => { btsLoad = null; addEvent("warn", "Menara BTS gagal dimuat; matikan lalu nyalakan lagi lapisannya"); });
+    return btsLoad;
+  }
+  function btsPopup(lat, lng, op) {
+    const col = OP_COLOR[op.split(" · ")[0]] || "#c084fc";
+    const label = !op ? "Operator tidak tercatat" : op === "lain" ? "Operator lain" : op;
+    const osm = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=18/${lat}/${lng}`;
+    return `<div class="popup-title" style="color:${col}">▲ ${esc(label)}</div>
+      <div class="popup-row">Menara seluler · ${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+      <div class="popup-note">Dipetakan relawan OpenStreetMap: posisi menaranya, bukan jangkauan sinyal.
+        <a href="${osm}" target="_blank" rel="noopener">Lihat di OpenStreetMap ↗</a></div>`;
   }
 
   /* ---------------- STREAM CHECKS ---------------- */
@@ -516,13 +527,14 @@
       .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a> (${s.count})`).join(", ");
     const portals = (CITY_SOURCE.portals || [])
       .map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.city)} — ${esc(p.name)}</a> <span style="opacity:.7">(${esc(p.reason)})</span>`).join("<br>");
-    const snap = SOURCE.snapshot
-      ? new Date(SOURCE.snapshot).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "—";
+    const snap = fmtDate(SOURCE.snapshot);
     el.innerHTML = `CCTV tol: <a href="${esc(SOURCE.url || "#")}" target="_blank" rel="noopener">BPJT · Kementerian PU</a> — `
       + `${fmt(SOURCE.count || 0)} kamera (data per ${esc(snap)}`
       + (SOURCE.fixed ? `; ${SOURCE.fixed} URL stream diperbaiki dari situs operator` : "") + `).<br>`
       + (citySrc ? `CCTV kota: ${citySrc}.<br>` : "")
-      + `BTS: ${fmt(bts.length)} lokasi <em>representatif</em>, hanya ilustrasi infrastruktur: bukan koordinat asli dan tidak terhubung ke perangkat apa pun.<br>`
+      + `BTS: ${fmt(BTS_SOURCE.count || 0)} menara seluler dari <a href="${esc(BTS_SOURCE.url || "https://www.openstreetmap.org/copyright")}" target="_blank" rel="noopener">OpenStreetMap</a>`
+      + ` (© kontributor OpenStreetMap, ODbL; data per ${esc(fmtDate(BTS_SOURCE.pulled))}), dipetakan relawan sehingga belum lengkap. `
+      + `Hanya posisi dan operator, tidak terhubung ke ponsel atau perangkat apa pun.<br>`
       + `Hanya analitik lalu lintas umum: tanpa pengenalan wajah, tanpa pembacaan pelat nomor, tanpa pelacakan identitas.`
       + (portals ? `<div style="margin-top:8px">Portal resmi (lihat langsung di situsnya):<br>${portals}</div>` : "");
   }
@@ -1398,7 +1410,7 @@
     tickClock();
 
     const nCity = cams.filter(c => c.kind === "city").length;
-    addEvent("info", `SENTINEL aktif · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(bts.length)} BTS representatif`);
+    addEvent("info", `SENTINEL aktif · ${fmt(cams.length)} kamera (${fmt(cams.length - nCity)} tol, ${fmt(nCity)} kota) · ${fmt(BTS_SOURCE.count || 0)} menara BTS (OpenStreetMap)`);
 
     setInterval(tickClock, 1000);
     window.addEventListener("resize", () => { drawSpark(); renderDensity(); if (tab === "analitik") renderTraffic(); });
